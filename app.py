@@ -33,7 +33,7 @@ st.markdown("""
     /* 側邊欄 */
     section[data-testid="stSidebar"] { background-color: #0d0d0d; border-right: 1px solid #333; }
     
-    /* 自定義 KPI 卡片 */
+    /* KPI 卡片 */
     .kpi-card {
         background-color: #1E1E1E;
         border: 1px solid #333;
@@ -50,10 +50,10 @@ st.markdown("""
     .kpi-label { color: #888; font-size: 0.85rem; margin-bottom: 5px; }
     .kpi-value { color: #FFF; font-size: 1.6rem; font-weight: bold; font-family: 'Arial Black', sans-serif; }
     
-    /* [NEW] 戰術分級色票 */
-    .tier-s { color: #00FF55 !important; text-shadow: 0 0 15px rgba(0, 255, 85, 0.3); } /* > 10 */
-    .tier-a { color: #00E5FF !important; text-shadow: 0 0 10px rgba(0, 229, 255, 0.3); } /* 5-10 */
-    .tier-b { color: #E0E0E0 !important; } /* < 5 */
+    /* 戰術分級色票 */
+    .tier-s { color: #00FF55 !important; text-shadow: 0 0 15px rgba(0, 255, 85, 0.3); }
+    .tier-a { color: #00E5FF !important; text-shadow: 0 0 10px rgba(0, 229, 255, 0.3); }
+    .tier-b { color: #E0E0E0 !important; }
 
     /* 卡片 */
     .dashboard-card { background-color: #1E1E1E; border: 1px solid #333; border-radius: 6px; padding: 15px; margin-bottom: 15px; }
@@ -78,7 +78,7 @@ st.markdown("""
     div.stButton > button { width: 100%; background-color: #262626; color: #AAA; border: 1px solid #444; border-radius: 4px; padding: 0.3rem; }
     div.stButton > button:hover { border-color: #777; color: #FFF; background-color: #333; }
     
-    /* 彈窗 (Dialog Box) */
+    /* 彈窗 */
     div[role="dialog"] { 
         background-color: #000 !important; 
         border: 1px solid #555; 
@@ -111,26 +111,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. Cookie 管理器與資料庫核心 ---
+# --- 2. Cookie & Data ---
 cookie_manager = stx.CookieManager()
-
 DATA_FOLDER = "盟戰資料庫"
-if not os.path.exists(DATA_FOLDER):
-    os.makedirs(DATA_FOLDER)
+if not os.path.exists(DATA_FOLDER): os.makedirs(DATA_FOLDER)
 
 def save_uploaded_file(uploaded_file):
     try:
-        with open(os.path.join(DATA_FOLDER, uploaded_file.name), "wb") as f:
-            f.write(uploaded_file.getbuffer())
+        with open(os.path.join(DATA_FOLDER, uploaded_file.name), "wb") as f: f.write(uploaded_file.getbuffer())
         return True
-    except:
-        return False
+    except: return False
 
 def load_data_from_folder():
     all_data = []
     files = [f for f in os.listdir(DATA_FOLDER) if f.endswith('.csv')]
-    if not files:
-        return pd.DataFrame()
+    if not files: return pd.DataFrame()
     for filename in files:
         try:
             df = pd.read_csv(os.path.join(DATA_FOLDER, filename))
@@ -139,16 +134,14 @@ def load_data_from_folder():
             record_date = pd.to_datetime(f"{match.group(1)}-{match.group(2)}-{match.group(3)} {match.group(4)}:{match.group(5)}:{match.group(6)}") if match else pd.Timestamp.now()
             df['紀錄時間'] = record_date
             all_data.append(df)
-        except:
-            pass
-    if not all_data:
-        return pd.DataFrame()
+        except: pass
+    if not all_data: return pd.DataFrame()
     full_df = pd.concat(all_data, ignore_index=True).sort_values('紀錄時間')
     full_df['勢力值'] = full_df['勢力值'].replace(0, 1)
     full_df['戰功效率'] = (full_df['戰功總量'] / full_df['勢力值']).round(2)
     return full_df
 
-# --- 3. 智慧門禁系統 ---
+# --- 3. 智慧門禁 ---
 def check_password():
     if st.session_state.get("password_correct", False): return True
     auth_token = cookie_manager.get("auth_token")
@@ -176,7 +169,7 @@ def check_password():
 
 check_password()
 
-# --- 4. 數據運算 ---
+# --- 4. 數據運算 (日均成長) ---
 def calculate_daily_velocity(df, group_col=None):
     df['date_only'] = df['紀錄時間'].dt.date
     daily_snapshots = df.groupby('date_only')['紀錄時間'].max().reset_index()
@@ -206,37 +199,24 @@ cookies_frontline = cookie_manager.get(cookie="frontline_regions")
 if 'font_size' not in st.session_state: st.session_state.font_size = int(cookies_font_size) if cookies_font_size else 18
 if 'frontline_regions' not in st.session_state: st.session_state.frontline_regions = cookies_frontline.split(',') if cookies_frontline else []
 
-# 初始化參數 (更新：效率改為下限與上限切換，但雷達預設邏輯需配合)
-# [核心] 增加 q_eff_op 控制 >= 或 <=
-default_vals = {'q_merit_op': '大於 >=', 'q_merit_val': 0, 
-                'q_power_op': '大於 >=', 'q_power_val': 0, 
-                'q_eff_op': '大於 >=', 'q_eff_val': 0.0, # 改名 val 以通用
-                'q_rank': 300}
-
+default_vals = {'q_merit_op': '大於 >=', 'q_merit_val': 0, 'q_power_op': '大於 >=', 'q_power_val': 0, 'q_eff_op': '大於 >=', 'q_eff_val': 0.0, 'q_rank': 300}
 for k, v in default_vals.items(): 
     if k not in st.session_state: st.session_state[k] = v
 
 def set_preset(ptype):
-    updates = {}
-    # 地奴: 效率低 (<= 2)
-    if ptype == 'slave': updates = {'q_merit_op': '小於 <=', 'q_merit_val': 10000, 'q_power_op': '大於 >=', 'q_power_val': 25000, 'q_eff_op': '小於 <=', 'q_eff_val': 2.0}
-    # 戰神: 效率高 (>= 10)
-    elif ptype == 'elite': updates = {'q_merit_op': '大於 >=', 'q_merit_val': 100000, 'q_power_op': '大於 >=', 'q_power_val': 0, 'q_eff_op': '大於 >=', 'q_eff_val': 10.0}
-    # 萌新
-    elif ptype == 'newbie': updates = {'q_merit_op': '小於 <=', 'q_merit_val': 5000, 'q_power_val': 10000, 'q_power_op': '小於 <=', 'q_eff_op': '大於 >=', 'q_eff_val': 0.0}
-    # 重置
-    elif ptype == 'reset': updates = default_vals
-    
-    for k, v in updates.items(): st.session_state[k] = v
+    updates = {'slave':{'q_merit_op':'小於 <=','q_merit_val':10000,'q_power_op':'大於 >=','q_power_val':25000,'q_eff_op':'小於 <=','q_eff_val':2.0},
+               'elite':{'q_merit_op':'大於 >=','q_merit_val':100000,'q_power_op':'大於 >=','q_power_val':0,'q_eff_op':'大於 >=','q_eff_val':10.0},
+               'newbie':{'q_merit_op':'小於 <=','q_merit_val':5000,'q_power_op':'小於 <=','q_power_val':10000,'q_eff_op':'大於 >=','q_eff_val':0.0},
+               'reset':{'q_merit_op':'大於 >=','q_merit_val':0,'q_power_op':'大於 >=','q_power_val':0,'q_eff_op':'大於 >=','q_eff_val':0.0}}
+    for k, v in updates.get(ptype, {}).items(): st.session_state[k] = v
 
 def update_font_cookie(): cookie_manager.set("font_size", st.session_state.font_size_slider); st.session_state.font_size = st.session_state.font_size_slider
 def update_frontline_cookie(): cookie_manager.set("frontline_regions", ",".join(st.session_state.frontline_select)); st.session_state.frontline_regions = st.session_state.frontline_select
 
-# [Color Helper] 效率顏色邏輯
 def get_eff_color_style(val):
-    if val > 10: return "color: #00FF55" # 亮綠
-    if val >= 5: return "color: #00E5FF" # 淺藍
-    return "color: #E0E0E0" # 白
+    if val > 10: return "color: #00FF55"
+    if val >= 5: return "color: #00E5FF"
+    return "color: #E0E0E0"
 
 def get_eff_class(val):
     if val > 10: return "tier-s"
@@ -260,46 +240,25 @@ def show_member_popup(member_name, raw_df):
     rank = curr['貢獻排行']
     total = len(latest_df)
     
-    # 戰功顏色 (保留黃綠區分)
     val_class_merit = "color: #FFE100; text-shadow: 0 0 20px rgba(255, 225, 0, 0.6);" if rank <= total * 0.1 else ("color: #00FF55; text-shadow: 0 0 15px rgba(0, 255, 85, 0.5);" if rank <= total * 0.3 else "color: #E0E0E0;")
-    
-    # 效率顏色 (使用新邏輯)
     val_style_eff = get_eff_color_style(curr['戰功效率'])
-    # 若 > 10 加上光暈
     if curr['戰功效率'] > 10: val_style_eff += "; text-shadow: 0 0 15px rgba(0, 255, 85, 0.3);"
     elif curr['戰功效率'] >= 5: val_style_eff += "; text-shadow: 0 0 10px rgba(0, 229, 255, 0.3);"
 
     col_left, col_right = st.columns([1.2, 2.8], gap="large")
-    
     with col_left:
         st.markdown(f"## {member_name}")
         st.caption(f"📍 {curr['所屬勢力']} | 🏷️ {curr['分組']}")
         st.markdown("---")
-        
-        html_stats = f"""
-        <table class="ace-table">
-            <tr>
-                <td class="ace-label-col">⚔️ 戰功</td>
-                <td class="ace-value-col" style="{val_class_merit}">{int(curr['戰功總量']):,}</td>
-            </tr>
-            <tr>
-                <td class="ace-label-col">🏰 勢力</td>
-                <td class="ace-value-col" style="color: #E0E0E0;">{int(curr['勢力值']):,}</td>
-            </tr>
-            <tr>
-                <td class="ace-label-col">⚡ 效率</td>
-                <td class="ace-value-col" style="{val_style_eff}">{curr['戰功效率']}</td>
-            </tr>
-            <tr>
-                <td class="ace-label-col">🏅 排名</td>
-                <td class="ace-value-col" style="color: #E0E0E0;">#{curr['貢獻排行']}</td>
-            </tr>
-        </table>
-        """
-        st.markdown(html_stats, unsafe_allow_html=True)
+        st.markdown(f"""<table class="ace-table">
+            <tr><td class="ace-label-col">⚔️ 戰功</td><td class="ace-value-col" style="{val_class_merit}">{int(curr['戰功總量']):,}</td></tr>
+            <tr><td class="ace-label-col">🏰 勢力</td><td class="ace-value-col" style="color: #E0E0E0;">{int(curr['勢力值']):,}</td></tr>
+            <tr><td class="ace-label-col">⚡ 效率</td><td class="ace-value-col" style="{val_style_eff}">{curr['戰功效率']}</td></tr>
+            <tr><td class="ace-label-col">🏅 排名</td><td class="ace-value-col" style="color: #E0E0E0;">#{curr['貢獻排行']}</td></tr>
+        </table>""", unsafe_allow_html=True)
         
     with col_right:
-        st.markdown("##### 🚀 戰力加速度 (日均成長速率)")
+        st.markdown("##### 🚀 戰力加速度 (日均成長)")
         base = alt.Chart(history).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
         area = base.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(y=alt.Y('daily_merit_growth', title='日均戰功'), tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')])
         line = base.mark_line(interpolate='basis', color='#00FF55', strokeWidth=3).encode(y=alt.Y('daily_power_growth', title='日均勢力'), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')])
@@ -319,7 +278,7 @@ latest_time_str = latest_df['紀錄時間'].iloc[0].strftime('%Y/%m/%d %H:%M')
 st.sidebar.caption(f"📅 {latest_time_str}")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8rem;'>戰略指揮中心 v44.0<br>Updated: {latest_time_str}</div>", unsafe_allow_html=True)
+st.sidebar.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8rem;'>戰略指揮中心 v45.0<br>Updated: {latest_time_str}</div>", unsafe_allow_html=True)
 
 grps = list(latest_df['分組'].unique())
 sel_grps = st.sidebar.multiselect("分組", grps, default=grps)
@@ -336,7 +295,6 @@ if kw:
 
 st.markdown("<h2 style='color:#DDD;'>🏯 戰略指揮中心</h2>", unsafe_allow_html=True)
 
-# KPI (Avg Efficiency Color)
 avg_eff = filt_df['戰功效率'].mean()
 eff_class = get_eff_class(avg_eff)
 k1, k2, k3, k4 = st.columns(4)
@@ -345,7 +303,20 @@ with k2: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>總勢力</d
 with k3: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>活躍人數</div><div class='kpi-value'>{len(filt_df):,}</div></div>", unsafe_allow_html=True)
 with k4: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>平均效率</div><div class='kpi-value {eff_class}'>{avg_eff:.2f}</div></div>", unsafe_allow_html=True)
 
-st.markdown(f"""<div class="version-tag">v44.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
+st.markdown(f"""<div class="version-tag">v45.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
+
+# --- [核心計算：全域極值] ---
+# 1. 計算全盟與所有分組的 Velocity
+alliance_velocity = calculate_daily_velocity(raw_df)
+group_velocity_all = calculate_daily_velocity(raw_df, group_col='分組')
+
+# 2. 找出最大值 (用於鎖定 Y 軸)
+max_merit_growth_all = alliance_velocity['daily_merit_growth'].max()
+max_power_growth_all = alliance_velocity['daily_power_growth'].max()
+# 分組的最大值 (取所有分組中最高的那個點)
+max_merit_growth_grp = group_velocity_all['daily_merit_growth'].max()
+max_power_growth_grp = group_velocity_all['daily_power_growth'].max()
+min_power_growth_grp = group_velocity_all['daily_power_growth'].min() # 勢力可能負成長
 
 # 0. 動能
 st.markdown("<div class='dashboard-card card-cyan'>", unsafe_allow_html=True)
@@ -353,19 +324,30 @@ st.markdown("### 📈 戰略動能分析")
 ct1, ct2 = st.columns(2)
 with ct1:
     st.caption("🌍 全盟")
-    av = calculate_daily_velocity(raw_df)
-    ba = alt.Chart(av).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
-    aa = ba.mark_area(interpolate='basis', line={'color':'#00E5FF'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(0, 229, 255, 0.5)', offset=0), alt.GradientStop(color='rgba(0, 229, 255, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(y=alt.Y('daily_merit_growth', title='日增戰功'), tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')])
-    la = ba.mark_line(interpolate='basis', color='#FF00FF', strokeWidth=2).encode(y=alt.Y('daily_power_growth', title='日增勢力'), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')])
+    # 使用全盟最大值鎖定
+    ba = alt.Chart(alliance_velocity).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
+    aa = ba.mark_area(interpolate='basis', line={'color':'#00E5FF'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(0, 229, 255, 0.5)', offset=0), alt.GradientStop(color='rgba(0, 229, 255, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
+        y=alt.Y('daily_merit_growth', title='日增戰功', scale=alt.Scale(domain=[0, max_merit_growth_all])), # 鎖定全盟最大
+        tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')]
+    )
+    la = ba.mark_line(interpolate='basis', color='#FF00FF', strokeWidth=2).encode(
+        y=alt.Y('daily_power_growth', title='日增勢力', scale=alt.Scale(domain=[alliance_velocity['daily_power_growth'].min(), max_power_growth_all])), # 鎖定全盟最大
+        tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')]
+    )
     st.altair_chart((aa + la).resolve_scale(y='independent').interactive(), use_container_width=True)
 with ct2:
     st.caption("🚩 分組")
     tg = st.selectbox("選擇分組", grps, key="tgs", label_visibility="collapsed")
-    gv_all = calculate_daily_velocity(raw_df, group_col='分組')
-    gv = gv_all[gv_all['分組'] == tg]
+    gv = group_velocity_all[group_velocity_all['分組'] == tg]
     bg = alt.Chart(gv).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
-    ag = bg.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(y=alt.Y('daily_merit_growth', title='日增戰功'), tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')])
-    lg = bg.mark_line(interpolate='basis', color='#00FF55', strokeWidth=2).encode(y=alt.Y('daily_power_growth', title='日增勢力'), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')])
+    ag = bg.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
+        y=alt.Y('daily_merit_growth', title='日增戰功', scale=alt.Scale(domain=[0, max_merit_growth_grp])), # 鎖定分組最大
+        tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')]
+    )
+    lg = bg.mark_line(interpolate='basis', color='#00FF55', strokeWidth=2).encode(
+        y=alt.Y('daily_power_growth', title='日增勢力', scale=alt.Scale(domain=[min_power_growth_grp, max_power_growth_grp])), # 鎖定分組最大
+        tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')]
+    )
     st.altair_chart((ag + lg).resolve_scale(y='independent').interactive(), use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -388,10 +370,7 @@ with c1: st.markdown("### 🏆 重點人員名單")
 with c2: nr = st.number_input("行數", 5, 50, 10, step=5, label_visibility="collapsed")
 cl1, cl2, cl3 = st.columns(3)
 tm = None
-
-def style_eff_col(s):
-    return [get_eff_color_style(v) for v in s]
-
+def style_eff_col(s): return [get_eff_color_style(v) for v in s]
 with cl1:
     st.caption("🔥 十大戰功")
     d1 = filt_df.nlargest(nr, '戰功總量')[['成員','分組','戰功總量']]
@@ -423,28 +402,18 @@ if cb4.button("🔄 重置"): set_preset('reset')
 cq1, cq2, cq3, cq4 = st.columns([1.2, 1.2, 0.8, 0.8])
 with cq1: st.caption("戰功"); st.selectbox("", ["大於 >=", "小於 <="], key="q_merit_op", label_visibility="collapsed"); st.number_input("", step=10000, key="q_merit_val", label_visibility="collapsed")
 with cq2: st.caption("勢力"); st.selectbox("", ["大於 >=", "小於 <="], key="q_power_op", label_visibility="collapsed"); st.number_input("", step=5000, key="q_power_val", label_visibility="collapsed")
-with cq3: 
-    st.caption("效率篩選")
-    # [修正] 改為 Selectbox + Input
-    st.selectbox("", ["大於 >=", "小於 <="], key="q_eff_op", label_visibility="collapsed")
-    st.number_input("", step=1.0, key="q_eff_val", label_visibility="collapsed")
+with cq3: st.caption("效率篩選"); st.selectbox("", ["大於 >=", "小於 <="], key="q_eff_op", label_visibility="collapsed"); st.number_input("", step=1.0, key="q_eff_val", label_visibility="collapsed")
 with cq4: st.caption("Top N"); st.number_input("", step=10, key="q_rank", label_visibility="collapsed")
-
 qdf = filt_df.copy()
-# 戰功邏輯
 if "大於" in st.session_state.q_merit_op: qdf = qdf[qdf['戰功總量'] >= st.session_state.q_merit_val]
 else: qdf = qdf[qdf['戰功總量'] <= st.session_state.q_merit_val]
-# 勢力邏輯
 if "大於" in st.session_state.q_power_op: qdf = qdf[qdf['勢力值'] >= st.session_state.q_power_val]
 else: qdf = qdf[qdf['勢力值'] <= st.session_state.q_power_val]
-# 效率邏輯
 if "大於" in st.session_state.q_eff_op: qdf = qdf[qdf['戰功效率'] >= st.session_state.q_eff_val]
 else: qdf = qdf[qdf['戰功效率'] <= st.session_state.q_eff_val]
-
 qdf = qdf[qdf['貢獻排行'] <= st.session_state.q_rank].sort_values('貢獻排行')
 st.markdown(f"<div style='margin-top:10px;color:#AAA'>🎯 鎖定 {len(qdf)} 目標</div>", unsafe_allow_html=True)
 qdd = qdf[['成員', '分組', '貢獻排行', '戰功總量', '勢力值', '戰功效率']].copy()
-# 染綠雷達效率
 sq = qdd.style.format({"戰功總量": "{:,}", "勢力值": "{:,}", "戰功效率": "{:.2f}"}).apply(style_eff_col, subset=["戰功效率"])
 eq = st.dataframe(sq, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="t4")
 if len(eq.selection['rows']): tm = qdf.iloc[eq.selection['rows'][0]]['成員']

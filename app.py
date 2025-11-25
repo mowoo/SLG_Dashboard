@@ -8,6 +8,41 @@ import extra_streamlit_components as stx
 # --- 1. 頁面配置與 CSS ---
 st.set_page_config(page_title="戰略指揮中心", layout="wide", page_icon="🏯")
 
+# --- 🔒 [NEW] 簡易密碼鎖功能 ---
+def check_password():
+    """如果未通過密碼驗證，顯示輸入框並停止執行後續程式"""
+    
+    # 如果這是在本地跑 (沒有 secrets)，或者 secrets 裡沒設密碼，就直接放行 (方便測試)
+    if "password" not in st.secrets:
+        return True
+
+    def password_entered():
+        if st.session_state["password"] == st.secrets["password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # 驗證後清除輸入框內容
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # 第一次進入，顯示輸入框
+        st.text_input("請輸入指揮官密碼", type="password", on_change=password_entered, key="password")
+        st.stop() # 停止執行下面的程式碼
+        
+    elif not st.session_state["password_correct"]:
+        # 密碼錯誤
+        st.text_input("請輸入指揮官密碼", type="password", on_change=password_entered, key="password")
+        st.error("⛔ 密碼錯誤，請重新輸入")
+        st.stop()
+    
+    return True
+
+# 執行檢查 (如果沒過，這裡就會停住)
+check_password()
+
+# ==========================================
+# 以下是原本的戰情室程式碼 (只有通過檢查才會執行到這裡)
+# ==========================================
+
 st.markdown("""
 <style>
     /* 全域背景 */
@@ -39,7 +74,7 @@ st.markdown("""
 
     /* 卡片 */
     .dashboard-card { background-color: #1E1E1E; border: 1px solid #333; border-radius: 6px; padding: 15px; margin-bottom: 15px; }
-    .card-cyan { border-top: 3px solid #00E5FF; } /* 全盟趨勢專用色 */
+    .card-cyan { border-top: 3px solid #00E5FF; }
     .card-red { border-top: 3px solid #D04F4F; }
     .card-blue { border-top: 3px solid #4F8CD0; }
     .card-purple { border-top: 3px solid #9B4FD0; }
@@ -77,11 +112,11 @@ st.markdown("""
     .val-front { color: #00FF55; text-shadow: 0 0 15px rgba(0, 255, 85, 0.4); }
     @media (min-width: 1400px) { .ace-value-col { font-size: 64px; } }
     
-    /* [NEW] 左下角版本浮水印 */
+    /* 版本浮水印 */
     .version-tag {
         position: fixed;
         bottom: 10px;
-        left: 10px; /* 改為左下角 */
+        left: 10px;
         background-color: rgba(0, 0, 0, 0.7);
         color: #555;
         padding: 5px 10px;
@@ -130,10 +165,9 @@ def load_data_from_folder():
     full_df['戰功效率'] = (full_df['戰功總量'] / full_df['勢力值']).round(2)
     return full_df
 
-# --- 3. 數據運算 (核心進化：日均快照) ---
+# --- 3. 數據運算 ---
 def calculate_daily_velocity(df, group_col=None):
     df['date_only'] = df['紀錄時間'].dt.date
-    # 每日快照：取當天最後一筆
     daily_snapshots = df.groupby('date_only')['紀錄時間'].max().reset_index()
     df_daily = pd.merge(df, daily_snapshots, on=['date_only', '紀錄時間'], how='inner')
     
@@ -154,8 +188,7 @@ def calculate_daily_velocity(df, group_col=None):
     agged['daily_power_growth'] = (agged['power_diff'] / agged['time_diff']).fillna(0)
     return agged
 
-# --- 4. 狀態與 Cookie 同步 ---
-
+# --- 4. 狀態與 Cookie ---
 if 'last_selected_member' not in st.session_state:
     st.session_state.last_selected_member = None
 
@@ -272,7 +305,7 @@ st.sidebar.caption(f"📅 {latest_time_str}")
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"""
 <div style='text-align: center; color: #666; font-size: 0.8rem;'>
-    戰略指揮中心 v42.0<br>
+    戰略指揮中心 v43.0<br>
     Updated: {latest_time_str}
 </div>
 """, unsafe_allow_html=True)
@@ -299,43 +332,28 @@ k2.metric("總勢力", f"{int(filt_df['勢力值'].sum()):,}")
 k3.metric("活躍", f"{len(filt_df):,}")
 k4.metric("效率", f"{filt_df['戰功效率'].mean():.2f}")
 
-# [NEW] 左下角版本浮水印
-st.markdown(f"""
-<div class="version-tag">
-    v42.0 | {latest_time_str}
-</div>
-""", unsafe_allow_html=True)
+st.markdown(f"""<div class="version-tag">v43.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
 
-# --- 0. 戰略動能分析 (Strategic Momentum) ---
+# 0. 動能
 st.markdown("<div class='dashboard-card card-cyan'>", unsafe_allow_html=True)
-st.markdown("### 📈 戰略動能分析 (全盟 vs 分組)")
-
-col_trend_all, col_trend_grp = st.columns(2)
-
-# 全盟心電圖
-with col_trend_all:
-    st.caption("🌍 全盟總體動能 (藍:戰功 / 粉:勢力)")
-    alliance_velocity = calculate_daily_velocity(raw_df) # 全盟數據
-    base_all = alt.Chart(alliance_velocity).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
-    area_all = base_all.mark_area(interpolate='basis', line={'color':'#00E5FF'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(0, 229, 255, 0.5)', offset=0), alt.GradientStop(color='rgba(0, 229, 255, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(y=alt.Y('daily_merit_growth', title='日增戰功'), tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f', title='戰功增量')])
-    line_all = base_all.mark_line(interpolate='basis', color='#FF00FF', strokeWidth=2).encode(y=alt.Y('daily_power_growth', title='日增勢力'), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f', title='勢力增量')])
-    st.altair_chart((area_all + line_all).resolve_scale(y='independent').interactive(), use_container_width=True)
-
-# 分組競賽圖
-with col_trend_grp:
-    st.caption("🚩 分組動能檢視")
-    target_group = st.selectbox("選擇分組", grps, key="trend_group_select", label_visibility="collapsed")
-    
-    # 計算分組
-    group_velocity_all = calculate_daily_velocity(raw_df, group_col='分組')
-    group_velocity = group_velocity_all[group_velocity_all['分組'] == target_group]
-    
-    base_grp = alt.Chart(group_velocity).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
-    area_grp = base_grp.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(y=alt.Y('daily_merit_growth', title='日增戰功'), tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f', title='戰功增量')])
-    line_grp = base_grp.mark_line(interpolate='basis', color='#00FF55', strokeWidth=2).encode(y=alt.Y('daily_power_growth', title='日增勢力'), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f', title='勢力增量')])
-    
-    st.altair_chart((area_grp + line_grp).resolve_scale(y='independent').interactive(), use_container_width=True)
-
+st.markdown("### 📈 戰略動能分析")
+ct1, ct2 = st.columns(2)
+with ct1:
+    st.caption("🌍 全盟")
+    av = calculate_daily_velocity(raw_df)
+    ba = alt.Chart(av).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
+    aa = ba.mark_area(interpolate='basis', line={'color':'#00E5FF'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(0, 229, 255, 0.5)', offset=0), alt.GradientStop(color='rgba(0, 229, 255, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(y=alt.Y('daily_merit_growth', title='日增戰功'), tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')])
+    la = ba.mark_line(interpolate='basis', color='#FF00FF', strokeWidth=2).encode(y=alt.Y('daily_power_growth', title='日增勢力'), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')])
+    st.altair_chart((aa + la).resolve_scale(y='independent').interactive(), use_container_width=True)
+with ct2:
+    st.caption("🚩 分組")
+    tg = st.selectbox("選擇分組", grps, key="tgs", label_visibility="collapsed")
+    gv_all = calculate_daily_velocity(raw_df, group_col='分組')
+    gv = gv_all[gv_all['分組'] == tg]
+    bg = alt.Chart(gv).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
+    ag = bg.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(y=alt.Y('daily_merit_growth', title='日增戰功'), tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')])
+    lg = bg.mark_line(interpolate='basis', color='#00FF55', strokeWidth=2).encode(y=alt.Y('daily_power_growth', title='日增勢力'), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')])
+    st.altair_chart((ag + lg).resolve_scale(y='independent').interactive(), use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 # 1. 集團軍
@@ -343,13 +361,11 @@ st.markdown("<div class='dashboard-card card-red'>", unsafe_allow_html=True)
 c1, c2 = st.columns([4, 1])
 with c1: st.markdown("### 🏳️ 集團軍情報")
 with c2: fs = st.slider("字體", 14, 30, value=st.session_state.font_size, key="font_size_slider", on_change=update_font_cookie, label_visibility="collapsed")
-
 gs = filt_df.groupby('分組').agg(n=('成員','count'), wm=('戰功總量','sum'), awm=('戰功總量','mean'), p=('勢力值','sum'), ap=('勢力值','mean')).reset_index().sort_values('wm', ascending=False)
-html_content = f"<style>.clean-table td, .clean-table th {{ font-size: {fs}px; }}</style><table class='clean-table'><thead><tr><th>分組</th><th>人數</th><th>總戰功</th><th>平均戰功</th><th>總勢力</th><th>平均勢力</th></tr></thead><tbody>"
-for _, r in gs.iterrows():
-    html_content += f"<tr><td>{r['分組']}</td><td>{r['n']}</td><td>{int(r['wm']):,}</td><td>{int(r['awm']):,}</td><td>{int(r['p']):,}</td><td>{int(r['ap']):,}</td></tr>"
-html_content += "</tbody></table>"
-st.markdown(html_content, unsafe_allow_html=True)
+h = f"<style>.clean-table td, .clean-table th {{ font-size: {fs}px; }}</style><table class='clean-table'><thead><tr><th>分組</th><th>人數</th><th>總戰功</th><th>平均戰功</th><th>總勢力</th><th>平均勢力</th></tr></thead><tbody>"
+for _, r in gs.iterrows(): h += f"<tr><td>{r['分組']}</td><td>{r['n']}</td><td>{int(r['wm']):,}</td><td>{int(r['awm']):,}</td><td>{int(r['p']):,}</td><td>{int(r['ap']):,}</td></tr>"
+h += "</tbody></table>"
+st.markdown(h, unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 # 2. 重點名單

@@ -8,7 +8,6 @@ import datetime
 import time
 
 # --- 0. 後台配置 (Backend Config) ---
-# 您可以在這裡修改雷達的預設數值
 RADAR_CONFIG = {
     'slave':  {'desc': '👮‍♂️ 抓地奴', 'merit_op': '小於 <=', 'merit_val': 10000, 'power_op': '大於 >=', 'power_val': 25000, 'eff_op': '小於 <=', 'eff_val': 2.0},
     'elite':  {'desc': '⚔️ 找戰神', 'merit_op': '大於 >=', 'merit_val': 100000, 'power_op': '大於 >=', 'power_val': 0, 'eff_op': '大於 >=', 'eff_val': 10.0},
@@ -16,7 +15,7 @@ RADAR_CONFIG = {
     'reset':  {'desc': '🔄 重置', 'merit_op': '大於 >=', 'merit_val': 0, 'power_op': '大於 >=', 'power_val': 0, 'eff_op': '大於 >=', 'eff_val': 0.0}
 }
 
-# 要排除的分組 (不計入全盟統計)
+# 要排除的分組
 EXCLUDE_GROUPS = ['小號組', '未分類組']
 
 # --- 1. 頁面配置與 CSS ---
@@ -26,6 +25,8 @@ st.markdown("""
 <style>
     /* 全域背景 */
     .stApp { background-color: #121212; color: #E0E0E0; }
+    
+    /* 緊湊版面 */
     .block-container {
         max_width: 1024px !important;
         padding: 1rem 1.5rem 3rem 1.5rem !important;
@@ -56,6 +57,11 @@ st.markdown("""
     .kpi-label { color: #888; font-size: 0.85rem; margin-bottom: 5px; }
     .kpi-value { color: #FFF; font-size: 1.6rem; font-weight: bold; font-family: 'Arial Black', sans-serif; }
     
+    /* 戰術分級色票 (Class 用於 KPI) */
+    .tier-s { color: #00FF55 !important; text-shadow: 0 0 15px rgba(0, 255, 85, 0.3); } /* > 10 */
+    .tier-a { color: #00E5FF !important; text-shadow: 0 0 10px rgba(0, 229, 255, 0.3); } /* 5-10 */
+    .tier-b { color: #E0E0E0 !important; } /* < 5 */
+
     /* 卡片 */
     .dashboard-card { background-color: #1E1E1E; border: 1px solid #333; border-radius: 6px; padding: 15px; margin-bottom: 15px; }
     .card-cyan { border-top: 3px solid #00E5FF; }
@@ -64,7 +70,7 @@ st.markdown("""
     .card-purple { border-top: 3px solid #9B4FD0; }
     .card-gold { border-top: 3px solid #D4AF37; }
 
-    /* 列表表格 (HTML) */
+    /* 列表表格 */
     .clean-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     .clean-table th { text-align: right; padding: 8px; color: #888; border-bottom: 1px solid #444; font-weight: normal; }
     .clean-table th:first-child { text-align: left; }
@@ -123,7 +129,7 @@ def load_data_from_folder():
     full_df['勢力值'] = full_df['勢力值'].replace(0, 1)
     full_df['戰功效率'] = (full_df['戰功總量'] / full_df['勢力值']).round(2)
     
-    # [核心] 全局排除指定分組
+    # [核心修正] 全局排除指定分組
     full_df = full_df[~full_df['分組'].isin(EXCLUDE_GROUPS)]
     
     return full_df
@@ -157,7 +163,32 @@ def check_password():
 
 check_password()
 
-# --- 4. 數據運算 ---
+# --- 4. 樣式輔助函數 (移至此處避免 NameError) ---
+
+def get_eff_class(val):
+    """回傳 KPI 卡片用的 CSS Class"""
+    if val >= 10: return "tier-s"
+    if val >= 5: return "tier-a"
+    return "tier-b"
+
+def get_eff_style(val):
+    """回傳 Dataframe Styler 用的 Inline Style"""
+    if val >= 10: return "color: #00FF55" # 亮綠
+    if val >= 5: return "color: #00E5FF" # 淺藍
+    return "color: #E0E0E0" # 白
+
+def get_merit_style(val, threshold):
+    """戰功前 5% 亮綠"""
+    if val >= threshold: return "color: #00FF55"
+    return "color: #E0E0E0"
+
+def get_power_style(val):
+    """勢力值分級"""
+    if val < 20000: return "color: #FF7F50" # 珊瑚紅
+    if val > 30000: return "color: #2E8B57" # 墨綠
+    return "color: #E0E0E0"
+
+# --- 5. 數據運算 ---
 def calculate_daily_velocity(df, group_col=None):
     df['date_only'] = df['紀錄時間'].dt.date
     daily_snapshots = df.groupby('date_only')['紀錄時間'].max().reset_index()
@@ -191,7 +222,7 @@ def get_individual_global_max(raw_df):
     g_min_p = temp_df['daily_power_growth'].min()
     return g_max_m, g_max_p, g_min_p
 
-# --- 5. 狀態與 Cookie ---
+# --- 6. 狀態與 Cookie ---
 if 'last_selected_member' not in st.session_state: st.session_state.last_selected_member = None
 cookies_font_size = cookie_manager.get(cookie="font_size")
 cookies_frontline = cookie_manager.get(cookie="frontline_regions")
@@ -210,29 +241,11 @@ def set_preset(ptype):
         'q_power_op': cfg.get('power_op', '大於 >='), 'q_power_val': cfg.get('power_val', 0),
         'q_eff_op': cfg.get('eff_op', '大於 >='), 'q_eff_val': cfg.get('eff_val', 0.0)
     }
-    # Reset 時重置 Rank
     if ptype == 'reset': updates['q_rank'] = 300
-    
     for k, v in updates.items(): st.session_state[k] = v
 
 def update_font_cookie(): cookie_manager.set("font_size", st.session_state.font_size_slider); st.session_state.font_size = st.session_state.font_size_slider
 def update_frontline_cookie(): cookie_manager.set("frontline_regions", ",".join(st.session_state.frontline_select)); st.session_state.frontline_regions = st.session_state.frontline_select
-
-# [核心] 樣式邏輯函數
-def get_eff_style(val):
-    if val > 10: return "color: #00FF55" # 亮綠
-    if val >= 5: return "color: #00E5FF" # 淺藍
-    return "color: #E0E0E0" # 白
-
-def get_merit_style(val, threshold):
-    # 前 5% 亮綠色，其餘白色
-    if val >= threshold: return "color: #00FF55"
-    return "color: #E0E0E0"
-
-def get_power_style(val):
-    if val < 20000: return "color: #FF7F50" # 珊瑚紅
-    if val > 30000: return "color: #2E8B57" # 墨綠
-    return "color: #E0E0E0"
 
 @st.dialog("王牌戰略檔案", width="large")
 def show_member_popup(member_name, raw_df, g_max_m, g_max_p, g_min_p, merit_threshold):
@@ -282,7 +295,7 @@ def show_member_popup(member_name, raw_df, g_max_m, g_max_p, g_min_p, merit_thre
         )
         st.altair_chart((line + area).resolve_scale(y='independent').properties(height=600, padding={"left": 20, "right": 20, "top": 10, "bottom": 10}).interactive(), use_container_width=True)
 
-# --- 6. 主程式 ---
+# --- 7. 主程式 ---
 st.sidebar.title("🎛️ 指揮台")
 up = st.sidebar.file_uploader("📥 上傳", type=['csv'], accept_multiple_files=True)
 if up: 
@@ -296,15 +309,14 @@ latest_time_str = latest_df['紀錄時間'].iloc[0].strftime('%Y/%m/%d %H:%M')
 st.sidebar.caption(f"📅 {latest_time_str}")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8rem;'>戰略指揮中心 v49.0<br>Updated: {latest_time_str}</div>", unsafe_allow_html=True)
+st.sidebar.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8rem;'>戰略指揮中心 v50.0<br>Updated: {latest_time_str}</div>", unsafe_allow_html=True)
 
 grps = list(latest_df['分組'].unique())
 sel_grps = st.sidebar.multiselect("分組", grps, default=grps)
 filt_df = latest_df[latest_df['分組'].isin(sel_grps)]
 
-# [核心計算] 全局戰功門檻 (前 5%)
+# [核心計算]
 MERIT_THRESHOLD_95 = filt_df['戰功總量'].quantile(0.95)
-# 全局個人極值
 G_MAX_M, G_MAX_P, G_MIN_P = get_individual_global_max(raw_df)
 
 st.sidebar.markdown("---")
@@ -321,14 +333,14 @@ if kw:
 st.markdown("<h2 style='color:#DDD;'>🏯 戰略指揮中心</h2>", unsafe_allow_html=True)
 
 avg_eff = filt_df['戰功效率'].mean()
-eff_class = get_eff_class(avg_eff) # 此 Class 用於 KPI，只有亮綠跟藍
+eff_class = get_eff_class(avg_eff)
 k1, k2, k3, k4 = st.columns(4)
 with k1: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>總戰功</div><div class='kpi-value'>{int(filt_df['戰功總量'].sum()):,}</div></div>", unsafe_allow_html=True)
 with k2: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>總勢力</div><div class='kpi-value'>{int(filt_df['勢力值'].sum()):,}</div></div>", unsafe_allow_html=True)
 with k3: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>活躍人數</div><div class='kpi-value'>{len(filt_df):,}</div></div>", unsafe_allow_html=True)
 with k4: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>平均效率</div><div class='kpi-value' style='{get_eff_style(avg_eff)}'>{avg_eff:.2f}</div></div>", unsafe_allow_html=True)
 
-st.markdown(f"""<div class="version-tag">v49.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
+st.markdown(f"""<div class="version-tag">v50.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
 
 # --- 戰略動能 ---
 gv_all_data = calculate_daily_velocity(raw_df, group_col='分組')
@@ -359,7 +371,7 @@ with ct2:
     st.altair_chart((lg + ag).resolve_scale(y='independent').interactive(), use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
-# 1. 集團軍 (HTML 表格套用樣式)
+# 1. 集團軍 (HTML 表格)
 st.markdown("<div class='dashboard-card card-red'>", unsafe_allow_html=True)
 c1, c2 = st.columns([4, 1])
 with c1: st.markdown("### 🏳️ 集團軍情報")
@@ -367,13 +379,12 @@ with c2: fs = st.slider("字體", 14, 30, value=st.session_state.font_size, key=
 gs = filt_df.groupby('分組').agg(n=('成員','count'), wm=('戰功總量','sum'), awm=('戰功總量','mean'), p=('勢力值','sum'), ap=('勢力值','mean')).reset_index().sort_values('wm', ascending=False)
 html_content = f"<style>.clean-table td, .clean-table th {{ font-size: {fs}px; }}</style><table class='clean-table'><thead><tr><th>分組</th><th>人數</th><th>總戰功</th><th>平均戰功</th><th>總勢力</th><th>平均勢力</th></tr></thead><tbody>"
 for _, r in gs.iterrows():
-    # 這裡的平均戰功和平均勢力也可以套用顏色，但為了整潔先不加，只加千分位
     html_content += f"<tr><td>{r['分組']}</td><td>{r['n']}</td><td>{int(r['wm']):,}</td><td>{int(r['awm']):,}</td><td>{int(r['p']):,}</td><td>{int(r['ap']):,}</td></tr>"
 html_content += "</tbody></table>"
 st.markdown(html_content, unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
-# 2. 重點名單 (Styler 套用)
+# 2. 重點名單 (Styler)
 st.markdown("<div class='dashboard-card card-blue'>", unsafe_allow_html=True)
 c1, c2 = st.columns([4, 1])
 with c1: st.markdown("### 🏆 重點人員名單")
@@ -381,7 +392,7 @@ with c2: nr = st.number_input("行數", 5, 50, 10, step=5, label_visibility="col
 cl1, cl2, cl3 = st.columns(3)
 tm = None
 
-# 定義 Dataframe 樣式函數
+# Dataframe 樣式函數
 def style_df(df):
     return df.style.format({
         "戰功總量": "{:,}", "勢力值": "{:,}", "戰功效率": "{:.2f}"
@@ -392,7 +403,6 @@ def style_df(df):
 with cl1:
     st.caption("🔥 十大戰功")
     d1 = filt_df.nlargest(nr, '戰功總量')[['成員','分組','戰功總量']]
-    # 戰功榜只染戰功
     s1 = d1.style.format({"戰功總量": "{:,}"}).map(lambda v: get_merit_style(v, MERIT_THRESHOLD_95), subset=['戰功總量'])
     e1 = st.dataframe(s1, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t1")
     if len(e1.selection['rows']): tm = d1.iloc[e1.selection['rows'][0]]['成員']
@@ -428,8 +438,12 @@ for k, v in RADAR_CONFIG.items():
 cq1, cq2, cq3, cq4 = st.columns([1.2, 1.2, 0.8, 0.8])
 with cq1: st.caption("戰功"); st.selectbox("", ["大於 >=", "小於 <="], key="q_merit_op", label_visibility="collapsed"); st.number_input("", step=10000, key="q_merit_val", label_visibility="collapsed")
 with cq2: st.caption("勢力"); st.selectbox("", ["大於 >=", "小於 <="], key="q_power_op", label_visibility="collapsed"); st.number_input("", step=5000, key="q_power_val", label_visibility="collapsed")
-with cq3: st.caption("效率篩選"); st.selectbox("", ["大於 >=", "小於 <="], key="q_eff_op", label_visibility="collapsed"); st.number_input("", step=1.0, key="q_eff_val", label_visibility="collapsed")
+with cq3: 
+    st.caption("效率篩選")
+    st.selectbox("", ["大於 >=", "小於 <="], key="q_eff_op", label_visibility="collapsed")
+    st.number_input("", step=1.0, key="q_eff_val", label_visibility="collapsed")
 with cq4: st.caption("Top N"); st.number_input("", step=10, key="q_rank", label_visibility="collapsed")
+
 qdf = filt_df.copy()
 if "大於" in st.session_state.q_merit_op: qdf = qdf[qdf['戰功總量'] >= st.session_state.q_merit_val]
 else: qdf = qdf[qdf['戰功總量'] <= st.session_state.q_merit_val]

@@ -4,44 +4,10 @@ import altair as alt
 import re
 import os
 import extra_streamlit_components as stx
+import datetime # [NEW] 用於計算 Cookie 過期時間
 
 # --- 1. 頁面配置與 CSS ---
 st.set_page_config(page_title="戰略指揮中心", layout="wide", page_icon="🏯")
-
-# --- 🔒 [NEW] 簡易密碼鎖功能 ---
-def check_password():
-    """如果未通過密碼驗證，顯示輸入框並停止執行後續程式"""
-    
-    # 如果這是在本地跑 (沒有 secrets)，或者 secrets 裡沒設密碼，就直接放行 (方便測試)
-    if "password" not in st.secrets:
-        return True
-
-    def password_entered():
-        if st.session_state["password"] == st.secrets["password"]:
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # 驗證後清除輸入框內容
-        else:
-            st.session_state["password_correct"] = False
-
-    if "password_correct" not in st.session_state:
-        # 第一次進入，顯示輸入框
-        st.text_input("請輸入指揮官密碼", type="password", on_change=password_entered, key="password")
-        st.stop() # 停止執行下面的程式碼
-        
-    elif not st.session_state["password_correct"]:
-        # 密碼錯誤
-        st.text_input("請輸入指揮官密碼", type="password", on_change=password_entered, key="password")
-        st.error("⛔ 密碼錯誤，請重新輸入")
-        st.stop()
-    
-    return True
-
-# 執行檢查 (如果沒過，這裡就會停住)
-check_password()
-
-# ==========================================
-# 以下是原本的戰情室程式碼 (只有通過檢查才會執行到這裡)
-# ==========================================
 
 st.markdown("""
 <style>
@@ -67,10 +33,25 @@ st.markdown("""
     /* 側邊欄 */
     section[data-testid="stSidebar"] { background-color: #0d0d0d; border-right: 1px solid #333; }
     
-    /* KPI */
-    div[data-testid="stMetric"] { background-color: #1E1E1E; border: 1px solid #333; padding: 10px; border-radius: 4px; }
-    div[data-testid="stMetricLabel"] { color: #888 !important; font-size: 0.8rem; }
-    div[data-testid="stMetricValue"] { color: #FFF !important; font-size: 1.3rem; }
+    /* [NEW] 自定義 KPI 卡片樣式 (取代 st.metric 以便改色) */
+    .kpi-card {
+        background-color: #1E1E1E;
+        border: 1px solid #333;
+        padding: 15px;
+        border-radius: 6px;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        height: 100%;
+    }
+    .kpi-label { color: #888; font-size: 0.85rem; margin-bottom: 5px; }
+    .kpi-value { color: #FFF; font-size: 1.6rem; font-weight: bold; font-family: 'Arial Black', sans-serif; }
+    
+    /* 亮綠色特效 class */
+    .neon-green { color: #00FF55 !important; text-shadow: 0 0 15px rgba(0, 255, 85, 0.3); }
 
     /* 卡片 */
     .dashboard-card { background-color: #1E1E1E; border: 1px solid #333; border-radius: 6px; padding: 15px; margin-bottom: 15px; }
@@ -165,7 +146,45 @@ def load_data_from_folder():
     full_df['戰功效率'] = (full_df['戰功總量'] / full_df['勢力值']).round(2)
     return full_df
 
-# --- 3. 數據運算 ---
+# --- 3. 智慧門禁系統 (Smart Auth) ---
+def check_password():
+    """檢查密碼與 Cookie"""
+    # 1. 檢查是否已經通過驗證 (Session)
+    if st.session_state.get("password_correct", False):
+        return True
+    
+    # 2. 檢查 Cookie (1小時內有效)
+    auth_token = cookie_manager.get("auth_token")
+    if auth_token == "valid":
+        st.session_state["password_correct"] = True
+        return True
+
+    # 3. 顯示密碼輸入框
+    if "password" not in st.secrets: # 本地測試無密碼則放行
+        return True
+
+    placeholder = st.empty()
+    with placeholder.container():
+        st.markdown("### 🔒 指揮官權限驗證")
+        pwd = st.text_input("請輸入密碼", type="password", key="login_pwd")
+        if pwd:
+            if pwd == st.secrets["password"]:
+                st.session_state["password_correct"] = True
+                # 設定 Cookie，1 小時後過期
+                expires = datetime.datetime.now() + datetime.timedelta(hours=1)
+                cookie_manager.set("auth_token", "valid", expires_at=expires)
+                placeholder.empty() # 清除輸入框
+                st.rerun() # 重新整理以載入主畫面
+            else:
+                st.error("⛔ 密碼錯誤")
+                st.stop()
+        else:
+            st.stop()
+
+# 執行驗證 (未通過則停止)
+check_password()
+
+# --- 4. 數據運算 ---
 def calculate_daily_velocity(df, group_col=None):
     df['date_only'] = df['紀錄時間'].dt.date
     daily_snapshots = df.groupby('date_only')['紀錄時間'].max().reset_index()
@@ -188,7 +207,7 @@ def calculate_daily_velocity(df, group_col=None):
     agged['daily_power_growth'] = (agged['power_diff'] / agged['time_diff']).fillna(0)
     return agged
 
-# --- 4. 狀態與 Cookie ---
+# --- 5. 狀態與 Cookie ---
 if 'last_selected_member' not in st.session_state:
     st.session_state.last_selected_member = None
 
@@ -269,7 +288,7 @@ def show_member_popup(member_name, raw_df):
             </tr>
             <tr>
                 <td class="ace-label-col">⚡ 效率</td>
-                <td class="ace-value-col" style="color: #E0E0E0;">{curr['戰功效率']}</td>
+                <td class="ace-value-col neon-green">{curr['戰功效率']}</td>
             </tr>
             <tr>
                 <td class="ace-label-col">🏅 排名</td>
@@ -286,7 +305,7 @@ def show_member_popup(member_name, raw_df):
         line = base.mark_line(interpolate='basis', color='#00FF55', strokeWidth=3).encode(y=alt.Y('daily_power_growth', title='日均勢力'), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')])
         st.altair_chart((area + line).resolve_scale(y='independent').properties(height=600, padding={"left": 20, "right": 20, "top": 10, "bottom": 10}).interactive(), use_container_width=True)
 
-# --- 5. 主程式 ---
+# --- 6. 主程式 ---
 st.sidebar.title("🎛️ 指揮台")
 up = st.sidebar.file_uploader("📥 上傳", type=['csv'], accept_multiple_files=True)
 if up: 
@@ -305,7 +324,7 @@ st.sidebar.caption(f"📅 {latest_time_str}")
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"""
 <div style='text-align: center; color: #666; font-size: 0.8rem;'>
-    戰略指揮中心 v43.0<br>
+    戰略指揮中心 v44.0<br>
     Updated: {latest_time_str}
 </div>
 """, unsafe_allow_html=True)
@@ -326,13 +345,16 @@ if kw:
         st.sidebar.warning("無結果")
 
 st.markdown("<h2 style='color:#DDD;'>🏯 戰略指揮中心</h2>", unsafe_allow_html=True)
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("總戰功", f"{int(filt_df['戰功總量'].sum()):,}")
-k2.metric("總勢力", f"{int(filt_df['勢力值'].sum()):,}")
-k3.metric("活躍", f"{len(filt_df):,}")
-k4.metric("效率", f"{filt_df['戰功效率'].mean():.2f}")
 
-st.markdown(f"""<div class="version-tag">v43.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
+# [核心修正] KPI 面板改用 HTML 自訂，實現「效率」亮綠色
+kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+with kpi1: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>總戰功</div><div class='kpi-value'>{int(filt_df['戰功總量'].sum()):,}</div></div>", unsafe_allow_html=True)
+with kpi2: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>總勢力</div><div class='kpi-value'>{int(filt_df['勢力值'].sum()):,}</div></div>", unsafe_allow_html=True)
+with kpi3: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>活躍人數</div><div class='kpi-value'>{len(filt_df):,}</div></div>", unsafe_allow_html=True)
+# 這裡特別加入 'neon-green' class
+with kpi4: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>平均效率</div><div class='kpi-value neon-green'>{filt_df['戰功效率'].mean():.2f}</div></div>", unsafe_allow_html=True)
+
+st.markdown(f"""<div class="version-tag">v44.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
 
 # 0. 動能
 st.markdown("<div class='dashboard-card card-cyan'>", unsafe_allow_html=True)
@@ -362,10 +384,11 @@ c1, c2 = st.columns([4, 1])
 with c1: st.markdown("### 🏳️ 集團軍情報")
 with c2: fs = st.slider("字體", 14, 30, value=st.session_state.font_size, key="font_size_slider", on_change=update_font_cookie, label_visibility="collapsed")
 gs = filt_df.groupby('分組').agg(n=('成員','count'), wm=('戰功總量','sum'), awm=('戰功總量','mean'), p=('勢力值','sum'), ap=('勢力值','mean')).reset_index().sort_values('wm', ascending=False)
-h = f"<style>.clean-table td, .clean-table th {{ font-size: {fs}px; }}</style><table class='clean-table'><thead><tr><th>分組</th><th>人數</th><th>總戰功</th><th>平均戰功</th><th>總勢力</th><th>平均勢力</th></tr></thead><tbody>"
-for _, r in gs.iterrows(): h += f"<tr><td>{r['分組']}</td><td>{r['n']}</td><td>{int(r['wm']):,}</td><td>{int(r['awm']):,}</td><td>{int(r['p']):,}</td><td>{int(r['ap']):,}</td></tr>"
-h += "</tbody></table>"
-st.markdown(h, unsafe_allow_html=True)
+html_content = f"<style>.clean-table td, .clean-table th {{ font-size: {fs}px; }}</style><table class='clean-table'><thead><tr><th>分組</th><th>人數</th><th>總戰功</th><th>平均戰功</th><th>總勢力</th><th>平均勢力</th></tr></thead><tbody>"
+for _, r in gs.iterrows():
+    html_content += f"<tr><td>{r['分組']}</td><td>{r['n']}</td><td>{int(r['wm']):,}</td><td>{int(r['awm']):,}</td><td>{int(r['p']):,}</td><td>{int(r['ap']):,}</td></tr>"
+html_content += "</tbody></table>"
+st.markdown(html_content, unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 # 2. 重點名單
@@ -375,22 +398,31 @@ with c1: st.markdown("### 🏆 重點人員名單")
 with c2: nr = st.number_input("行數", 5, 50, 10, step=5, label_visibility="collapsed")
 cl1, cl2, cl3 = st.columns(3)
 tm = None
+
+# 定義亮綠色樣式函數
+def highlight_green(val):
+    return 'color: #00FF55'
+
 with cl1:
     st.caption("🔥 十大戰功")
     d1 = filt_df.nlargest(nr, '戰功總量')[['成員','分組','戰功總量']]
+    # 戰功不用綠色，保持進度條
     e1 = st.dataframe(d1, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t1", column_config={"戰功總量": st.column_config.ProgressColumn(" ", format="%d", max_value=int(latest_df['戰功總量'].max()))})
     if len(e1.selection['rows']): tm = d1.iloc[e1.selection['rows'][0]]['成員']
 with cl2:
     st.caption("⚡ 十大效率")
     d2 = filt_df[filt_df['勢力值']>10000].nlargest(nr, '戰功效率')[['成員','分組','戰功效率']]
-    e2 = st.dataframe(d2, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t2", column_config={"戰功效率": st.column_config.NumberColumn(" ", format="%.2f")})
+    # [核心修正] 使用 Pandas Styler 將效率欄位染成亮綠色
+    s2 = d2.style.format({"戰功效率": "{:.2f}"}).map(lambda x: "color: #00FF55", subset=["戰功效率"])
+    e2 = st.dataframe(s2, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t2")
     if len(e2.selection['rows']): tm = d2.iloc[e2.selection['rows'][0]]['成員']
 with cl3:
     st.caption("🐢 遲緩名單")
     avg = latest_df['勢力值'].mean()
     d3 = filt_df[filt_df['勢力值']>avg].nsmallest(nr, '戰功效率')[['成員','勢力值','戰功效率']]
-    d3d = d3.copy(); d3d['勢力值'] = d3d['勢力值'].apply(lambda x: f"{int(x):,}")
-    e3 = st.dataframe(d3d, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t3")
+    # 這裡也染綠效率
+    s3 = d3.style.format({"勢力值": "{:,}", "戰功效率": "{:.2f}"}).map(lambda x: "color: #00FF55", subset=["戰功效率"])
+    e3 = st.dataframe(s3, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t3")
     if len(e3.selection['rows']): tm = d3.iloc[e3.selection['rows'][0]]['成員']
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -415,9 +447,9 @@ else: qdf = qdf[qdf['勢力值'] <= st.session_state.q_power_val]
 qdf = qdf[(qdf['戰功效率'] <= st.session_state.q_eff_max) & (qdf['貢獻排行'] <= st.session_state.q_rank)].sort_values('貢獻排行')
 st.markdown(f"<div style='margin-top:10px;color:#AAA'>🎯 鎖定 {len(qdf)} 目標</div>", unsafe_allow_html=True)
 qdd = qdf[['成員', '分組', '貢獻排行', '戰功總量', '勢力值', '戰功效率']].copy()
-qdd['戰功總量'] = qdd['戰功總量'].apply(lambda x: f"{int(x):,}")
-qdd['勢力值'] = qdd['勢力值'].apply(lambda x: f"{int(x):,}")
-eq = st.dataframe(qdd, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="t4")
+# 染綠雷達效率
+sq = qdd.style.format({"戰功總量": "{:,}", "勢力值": "{:,}", "戰功效率": "{:.2f}"}).map(lambda x: "color: #00FF55", subset=["戰功效率"])
+eq = st.dataframe(sq, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="t4")
 if len(eq.selection['rows']): tm = qdf.iloc[eq.selection['rows'][0]]['成員']
 st.markdown("</div>", unsafe_allow_html=True)
 

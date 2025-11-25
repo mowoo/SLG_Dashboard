@@ -16,7 +16,7 @@ RADAR_CONFIG = {
 }
 
 # 要排除的分組
-EXCLUDE_GROUPS = ['小號組', '未分類組']
+EXCLUDE_GROUPS = ['小號', '未分組']
 
 # --- 1. 頁面配置與 CSS ---
 st.set_page_config(page_title="戰略指揮中心", layout="wide", page_icon="🏯")

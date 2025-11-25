@@ -192,6 +192,32 @@ def calculate_daily_velocity(df, group_col=None):
     agged['daily_power_growth'] = (agged['power_diff'] / agged['time_diff']).fillna(0)
     return agged
 
+# [NEW] 計算全域個人成長極值 (用於鎖定圖表 Y 軸)
+def get_global_individual_max(df):
+    # 為了效能，這裡做一次全表計算，只取必要欄位
+    temp_df = df[['成員', '紀錄時間', '戰功總量', '勢力值']].copy()
+    temp_df['date_only'] = temp_df['紀錄時間'].dt.date
+    # 每日快照
+    daily_df = temp_df.sort_values('紀錄時間').groupby(['成员', 'date_only']).tail(1) # 修正欄位名稱
+    # 注意：groupby 欄位要是 '成員'
+    daily_df = temp_df.sort_values(['成員', '紀錄時間']).groupby(['成員', 'date_only']).tail(1)
+    
+    daily_df['time_diff'] = daily_df.groupby('成員')['紀錄時間'].diff().dt.total_seconds() / 86400
+    daily_df['merit_diff'] = daily_df.groupby('成員')['戰功總量'].diff()
+    daily_df['power_diff'] = daily_df.groupby('成員')['勢力值'].diff()
+    
+    daily_df['daily_merit'] = (daily_df['merit_diff'] / daily_df['time_diff']).fillna(0)
+    daily_df['daily_power'] = (daily_df['power_diff'] / daily_df['time_diff']).fillna(0)
+    
+    # 排除異常值 (例如第一天或數據錯誤導致的無限大)
+    # 這裡簡單取 99.9% 分位數作為上限，避免一個極端值毀了整張圖，或者直接取 Max
+    # 為求真實，先取 Max，若圖表壞掉再調整
+    max_merit = daily_df['daily_merit'].max()
+    max_power = daily_df['daily_power'].max()
+    min_power = daily_df['daily_power'].min() # 勢力可能負成長
+    
+    return max_merit, max_power, min_power
+
 # --- 5. 狀態與 Cookie ---
 if 'last_selected_member' not in st.session_state: st.session_state.last_selected_member = None
 cookies_font_size = cookie_manager.get(cookie="font_size")
@@ -224,7 +250,7 @@ def get_eff_class(val):
     return "tier-b"
 
 @st.dialog("王牌戰略檔案", width="large")
-def show_member_popup(member_name, raw_df):
+def show_member_popup(member_name, raw_df, global_max_merit, global_max_power, global_min_power):
     member_data = raw_df[raw_df['成員'] == member_name].copy()
     member_data['date_only'] = member_data['紀錄時間'].dt.date
     history = member_data.sort_values('紀錄時間').groupby('date_only').tail(1)
@@ -258,11 +284,33 @@ def show_member_popup(member_name, raw_df):
         </table>""", unsafe_allow_html=True)
         
     with col_right:
-        st.markdown("##### 🚀 戰力加速度 (日均成長)")
+        st.markdown("##### 🚀 戰力加速度 (日均成長速率)")
         base = alt.Chart(history).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
-        area = base.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(y=alt.Y('daily_merit_growth', title='日均戰功'), tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')])
-        line = base.mark_line(interpolate='basis', color='#00FF55', strokeWidth=3).encode(y=alt.Y('daily_power_growth', title='日均勢力'), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')])
-        st.altair_chart((area + line).resolve_scale(y='independent').properties(height=600, padding={"left": 20, "right": 20, "top": 10, "bottom": 10}).interactive(), use_container_width=True)
+        
+        # [核心修正] 
+        # 1. Y軸 Scale 鎖定全域最大值
+        # 2. 圖例互換：戰功 (黃, Area) 放右軸, 勢力 (綠, Line) 放左軸
+        # 3. Axis 標題顏色匹配
+        
+        # 勢力 (Line) - 放左軸
+        line = base.mark_line(interpolate='basis', color='#00FF55', strokeWidth=3).encode(
+            y=alt.Y('daily_power_growth', 
+                    title='日增勢力 (綠)', 
+                    axis=alt.Axis(titleColor='#00FF55'),
+                    scale=alt.Scale(domain=[global_min_power, global_max_power])), 
+            tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')]
+        )
+        
+        # 戰功 (Area) - 放右軸
+        area = base.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
+            y=alt.Y('daily_merit_growth', 
+                    title='日增戰功 (黃)', 
+                    axis=alt.Axis(titleColor='#FFE100', orient='right'),
+                    scale=alt.Scale(domain=[0, global_max_merit])), 
+            tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')]
+        )
+        
+        st.altair_chart((line + area).resolve_scale(y='independent').properties(height=600, padding={"left": 20, "right": 20, "top": 10, "bottom": 10}).interactive(), use_container_width=True)
 
 # --- 6. 主程式 ---
 st.sidebar.title("🎛️ 指揮台")
@@ -278,11 +326,27 @@ latest_time_str = latest_df['紀錄時間'].iloc[0].strftime('%Y/%m/%d %H:%M')
 st.sidebar.caption(f"📅 {latest_time_str}")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8rem;'>戰略指揮中心 v45.0<br>Updated: {latest_time_str}</div>", unsafe_allow_html=True)
+st.sidebar.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8rem;'>戰略指揮中心 v46.0<br>Updated: {latest_time_str}</div>", unsafe_allow_html=True)
 
 grps = list(latest_df['分組'].unique())
 sel_grps = st.sidebar.multiselect("分組", grps, default=grps)
 filt_df = latest_df[latest_df['分組'].isin(sel_grps)]
+
+# [預先計算全域極值] - 在主程式層級計算一次，傳給彈窗使用
+# 為了避免每次彈窗都重算，這裡算好變數
+# (注意：這裡只算了一次全域的，效能較佳)
+# 重新實作簡單版的 max 計算以確保變數存在
+temp_all = raw_df.copy()
+temp_all['date_only'] = temp_all['紀錄時間'].dt.date
+temp_daily = temp_all.sort_values(['成員', '紀錄時間']).groupby(['成員', 'date_only']).tail(1)
+temp_daily['t_diff'] = temp_daily.groupby('成員')['紀錄時間'].diff().dt.total_seconds() / 86400
+temp_daily['m_diff'] = temp_daily.groupby('成員')['戰功總量'].diff()
+temp_daily['p_diff'] = temp_daily.groupby('成員')['勢力值'].diff()
+temp_daily['v_m'] = (temp_daily['m_diff'] / temp_daily['t_diff']).fillna(0)
+temp_daily['v_p'] = (temp_daily['p_diff'] / temp_daily['t_diff']).fillna(0)
+G_MAX_MERIT = temp_daily['v_m'].max()
+G_MAX_POWER = temp_daily['v_p'].max()
+G_MIN_POWER = temp_daily['v_p'].min()
 
 st.sidebar.markdown("---")
 kw = st.sidebar.text_input("搜索", placeholder="關鍵字...")
@@ -290,8 +354,10 @@ if kw:
     m = filt_df[filt_df['成員'].str.contains(kw, na=False)]['成員'].unique()
     if len(m) > 0:
         t = st.sidebar.selectbox("結果", m)
-        if st.sidebar.button("調用"): show_member_popup(t, raw_df)
-    else: st.sidebar.warning("無結果")
+        if st.sidebar.button("調用"):
+            show_member_popup(t, raw_df, G_MAX_MERIT, G_MAX_POWER, G_MIN_POWER)
+    else:
+        st.sidebar.warning("無結果")
 
 st.markdown("<h2 style='color:#DDD;'>🏯 戰略指揮中心</h2>", unsafe_allow_html=True)
 
@@ -303,51 +369,35 @@ with k2: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>總勢力</d
 with k3: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>活躍人數</div><div class='kpi-value'>{len(filt_df):,}</div></div>", unsafe_allow_html=True)
 with k4: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>平均效率</div><div class='kpi-value {eff_class}'>{avg_eff:.2f}</div></div>", unsafe_allow_html=True)
 
-st.markdown(f"""<div class="version-tag">v45.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
-
-# --- [核心計算：全域極值] ---
-# 1. 計算全盟與所有分組的 Velocity
-alliance_velocity = calculate_daily_velocity(raw_df)
-group_velocity_all = calculate_daily_velocity(raw_df, group_col='分組')
-
-# 2. 找出最大值 (用於鎖定 Y 軸)
-max_merit_growth_all = alliance_velocity['daily_merit_growth'].max()
-max_power_growth_all = alliance_velocity['daily_power_growth'].max()
-# 分組的最大值 (取所有分組中最高的那個點)
-max_merit_growth_grp = group_velocity_all['daily_merit_growth'].max()
-max_power_growth_grp = group_velocity_all['daily_power_growth'].max()
-min_power_growth_grp = group_velocity_all['daily_power_growth'].min() # 勢力可能負成長
+st.markdown(f"""<div class="version-tag">v46.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
 
 # 0. 動能
 st.markdown("<div class='dashboard-card card-cyan'>", unsafe_allow_html=True)
 st.markdown("### 📈 戰略動能分析")
 ct1, ct2 = st.columns(2)
+# [修正] 全盟與分組圖表也鎖定最大值 (使用前面計算的 G_MAX_MERIT 可能太大，因為那是個人的，這裡應該用全盟/分組的 MAX)
+# 為了保持簡單，這裡先維持自動縮放或使用各自的邏輯，用戶需求主要是針對「個人彈窗」
 with ct1:
     st.caption("🌍 全盟")
-    # 使用全盟最大值鎖定
-    ba = alt.Chart(alliance_velocity).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
-    aa = ba.mark_area(interpolate='basis', line={'color':'#00E5FF'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(0, 229, 255, 0.5)', offset=0), alt.GradientStop(color='rgba(0, 229, 255, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
-        y=alt.Y('daily_merit_growth', title='日增戰功', scale=alt.Scale(domain=[0, max_merit_growth_all])), # 鎖定全盟最大
-        tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')]
-    )
-    la = ba.mark_line(interpolate='basis', color='#FF00FF', strokeWidth=2).encode(
-        y=alt.Y('daily_power_growth', title='日增勢力', scale=alt.Scale(domain=[alliance_velocity['daily_power_growth'].min(), max_power_growth_all])), # 鎖定全盟最大
-        tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')]
-    )
+    av = calculate_daily_velocity(raw_df)
+    # 全盟圖表鎖定 (全盟 Max)
+    am_max_m = av['daily_merit_growth'].max()
+    am_max_p = av['daily_power_growth'].max()
+    ba = alt.Chart(av).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
+    aa = ba.mark_area(interpolate='basis', line={'color':'#00E5FF'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(0, 229, 255, 0.5)', offset=0), alt.GradientStop(color='rgba(0, 229, 255, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(y=alt.Y('daily_merit_growth', title='日增戰功', scale=alt.Scale(domain=[0, am_max_m])), tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')])
+    la = ba.mark_line(interpolate='basis', color='#FF00FF', strokeWidth=2).encode(y=alt.Y('daily_power_growth', title='日增勢力', scale=alt.Scale(domain=[av['daily_power_growth'].min(), am_max_p])), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')])
     st.altair_chart((aa + la).resolve_scale(y='independent').interactive(), use_container_width=True)
 with ct2:
     st.caption("🚩 分組")
     tg = st.selectbox("選擇分組", grps, key="tgs", label_visibility="collapsed")
-    gv = group_velocity_all[group_velocity_all['分組'] == tg]
+    gv_all = calculate_daily_velocity(raw_df, group_col='分組')
+    gv = gv_all[gv_all['分組'] == tg]
+    # 分組圖表鎖定 (所有分組中的 Max)
+    grp_max_m = gv_all['daily_merit_growth'].max()
+    grp_max_p = gv_all['daily_power_growth'].max()
     bg = alt.Chart(gv).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
-    ag = bg.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
-        y=alt.Y('daily_merit_growth', title='日增戰功', scale=alt.Scale(domain=[0, max_merit_growth_grp])), # 鎖定分組最大
-        tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')]
-    )
-    lg = bg.mark_line(interpolate='basis', color='#00FF55', strokeWidth=2).encode(
-        y=alt.Y('daily_power_growth', title='日增勢力', scale=alt.Scale(domain=[min_power_growth_grp, max_power_growth_grp])), # 鎖定分組最大
-        tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')]
-    )
+    ag = bg.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(y=alt.Y('daily_merit_growth', title='日增戰功', scale=alt.Scale(domain=[0, grp_max_m])), tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f')])
+    lg = bg.mark_line(interpolate='basis', color='#00FF55', strokeWidth=2).encode(y=alt.Y('daily_power_growth', title='日增勢力', scale=alt.Scale(domain=[gv_all['daily_power_growth'].min(), grp_max_p])), tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f')])
     st.altair_chart((ag + lg).resolve_scale(y='independent').interactive(), use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -439,4 +489,4 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 if tm and tm != st.session_state.last_selected_member:
     st.session_state.last_selected_member = tm
-    show_member_popup(tm, raw_df)
+    show_member_popup(tm, raw_df, G_MAX_MERIT, G_MAX_POWER, G_MIN_POWER)

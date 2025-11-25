@@ -15,7 +15,7 @@ RADAR_CONFIG = {
     'reset':  {'desc': '🔄 重置', 'merit_op': '大於 >=', 'merit_val': 0, 'power_op': '大於 >=', 'power_val': 0, 'eff_op': '大於 >=', 'eff_val': 0.0}
 }
 
-# 要排除的分組
+# [核心修正] 更新排除名單
 EXCLUDE_GROUPS = ['小號', '未分組']
 
 # --- 1. 頁面配置與 CSS ---
@@ -57,11 +57,6 @@ st.markdown("""
     .kpi-label { color: #888; font-size: 0.85rem; margin-bottom: 5px; }
     .kpi-value { color: #FFF; font-size: 1.6rem; font-weight: bold; font-family: 'Arial Black', sans-serif; }
     
-    /* 戰術分級色票 (Class 用於 KPI) */
-    .tier-s { color: #00FF55 !important; text-shadow: 0 0 15px rgba(0, 255, 85, 0.3); } /* > 10 */
-    .tier-a { color: #00E5FF !important; text-shadow: 0 0 10px rgba(0, 229, 255, 0.3); } /* 5-10 */
-    .tier-b { color: #E0E0E0 !important; } /* < 5 */
-
     /* 卡片 */
     .dashboard-card { background-color: #1E1E1E; border: 1px solid #333; border-radius: 6px; padding: 15px; margin-bottom: 15px; }
     .card-cyan { border-top: 3px solid #00E5FF; }
@@ -93,6 +88,8 @@ st.markdown("""
     .ace-table td { padding: 5px 0; vertical-align: bottom; border-bottom: 1px solid #333; }
     .ace-label-col { width: 1%; white-space: nowrap; font-size: 1.1rem; color: #888; text-transform: uppercase; padding-right: 15px !important; font-weight: bold; letter-spacing: 1px; }
     .ace-value-col { font-family: 'Arial Black', 'Helvetica Black', sans-serif; font-size: 48px; font-weight: 900; line-height: 1; color: #E0E0E0; text-align: left; }
+    .val-elite { color: #FFE100; text-shadow: 0 0 20px rgba(255, 225, 0, 0.5); }
+    .val-front { color: #00FF55; text-shadow: 0 0 15px rgba(0, 255, 85, 0.4); }
     @media (min-width: 1400px) { .ace-value-col { font-size: 64px; } }
     
     /* 版本浮水印 */
@@ -129,7 +126,7 @@ def load_data_from_folder():
     full_df['勢力值'] = full_df['勢力值'].replace(0, 1)
     full_df['戰功效率'] = (full_df['戰功總量'] / full_df['勢力值']).round(2)
     
-    # [核心修正] 全局排除指定分組
+    # [核心] 排除名單過濾
     full_df = full_df[~full_df['分組'].isin(EXCLUDE_GROUPS)]
     
     return full_df
@@ -163,30 +160,34 @@ def check_password():
 
 check_password()
 
-# --- 4. 樣式輔助函數 (移至此處避免 NameError) ---
-
-def get_eff_class(val):
-    """回傳 KPI 卡片用的 CSS Class"""
-    if val >= 10: return "tier-s"
-    if val >= 5: return "tier-a"
-    return "tier-b"
+# --- 4. 樣式函數 (定義在最前面) ---
 
 def get_eff_style(val):
-    """回傳 Dataframe Styler 用的 Inline Style"""
-    if val >= 10: return "color: #00FF55" # 亮綠
+    if val > 10: return "color: #00FF55" # 亮綠
     if val >= 5: return "color: #00E5FF" # 淺藍
     return "color: #E0E0E0" # 白
 
+def get_eff_class(val):
+    if val > 10: return "tier-s"
+    if val >= 5: return "tier-a"
+    return "tier-b"
+
 def get_merit_style(val, threshold):
-    """戰功前 5% 亮綠"""
     if val >= threshold: return "color: #00FF55"
     return "color: #E0E0E0"
 
 def get_power_style(val):
-    """勢力值分級"""
     if val < 20000: return "color: #FF7F50" # 珊瑚紅
     if val > 30000: return "color: #2E8B57" # 墨綠
     return "color: #E0E0E0"
+
+def style_df_eff(df):
+    # 專門給「效率」欄位上色的 helper
+    return df.style.format({"戰功效率": "{:.2f}"}).map(get_eff_style, subset=['戰功效率'])
+
+def style_df_power(df):
+    # 專門給「勢力」欄位上色的 helper
+    return df.style.format({"勢力值": "{:,}", "戰功效率": "{:.2f}"}).map(get_power_style, subset=['勢力值']).map(get_eff_style, subset=['戰功效率'])
 
 # --- 5. 數據運算 ---
 def calculate_daily_velocity(df, group_col=None):
@@ -234,7 +235,6 @@ for k, v in default_vals.items():
     if k not in st.session_state: st.session_state[k] = v
 
 def set_preset(ptype):
-    # 從 RADAR_CONFIG 讀取設定
     cfg = RADAR_CONFIG.get(ptype, {})
     updates = {
         'q_merit_op': cfg.get('merit_op', '大於 >='), 'q_merit_val': cfg.get('merit_val', 0),
@@ -261,12 +261,11 @@ def show_member_popup(member_name, raw_df, g_max_m, g_max_p, g_min_p, merit_thre
     
     curr = history.iloc[-1]
     
-    # 應用樣式
+    # 樣式
     s_merit = get_merit_style(curr['戰功總量'], merit_threshold)
     s_power = get_power_style(curr['勢力值'])
     s_eff = get_eff_style(curr['戰功效率'])
     
-    # 加強特效
     if "00FF55" in s_merit: s_merit += "; text-shadow: 0 0 20px rgba(0, 255, 85, 0.6);"
     if "00FF55" in s_eff: s_eff += "; text-shadow: 0 0 15px rgba(0, 255, 85, 0.3);"
 
@@ -371,7 +370,7 @@ with ct2:
     st.altair_chart((lg + ag).resolve_scale(y='independent').interactive(), use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
-# 1. 集團軍 (HTML 表格)
+# 1. 集團軍 (HTML)
 st.markdown("<div class='dashboard-card card-red'>", unsafe_allow_html=True)
 c1, c2 = st.columns([4, 1])
 with c1: st.markdown("### 🏳️ 集團軍情報")
@@ -384,7 +383,7 @@ html_content += "</tbody></table>"
 st.markdown(html_content, unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
-# 2. 重點名單 (Styler)
+# 2. 重點名單 (Styler 防呆)
 st.markdown("<div class='dashboard-card card-blue'>", unsafe_allow_html=True)
 c1, c2 = st.columns([4, 1])
 with c1: st.markdown("### 🏆 重點人員名單")
@@ -392,33 +391,28 @@ with c2: nr = st.number_input("行數", 5, 50, 10, step=5, label_visibility="col
 cl1, cl2, cl3 = st.columns(3)
 tm = None
 
-# Dataframe 樣式函數
-def style_df(df):
-    return df.style.format({
-        "戰功總量": "{:,}", "勢力值": "{:,}", "戰功效率": "{:.2f}"
-    }).map(lambda v: get_merit_style(v, MERIT_THRESHOLD_95), subset=['戰功總量']) \
-      .map(get_power_style, subset=['勢力值']) \
-      .map(get_eff_style, subset=['戰功效率'])
-
 with cl1:
     st.caption("🔥 十大戰功")
     d1 = filt_df.nlargest(nr, '戰功總量')[['成員','分組','戰功總量']]
-    s1 = d1.style.format({"戰功總量": "{:,}"}).map(lambda v: get_merit_style(v, MERIT_THRESHOLD_95), subset=['戰功總量'])
-    e1 = st.dataframe(s1, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t1")
-    if len(e1.selection['rows']): tm = d1.iloc[e1.selection['rows'][0]]['成員']
+    if not d1.empty:
+        s1 = d1.style.format({"戰功總量": "{:,}"}).map(lambda v: get_merit_style(v, MERIT_THRESHOLD_95), subset=['戰功總量'])
+        e1 = st.dataframe(s1, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t1")
+        if len(e1.selection['rows']): tm = d1.iloc[e1.selection['rows'][0]]['成員']
 with cl2:
     st.caption("⚡ 十大效率")
     d2 = filt_df[filt_df['勢力值']>10000].nlargest(nr, '戰功效率')[['成員','分組','戰功效率']]
-    s2 = d2.style.format({"戰功效率": "{:.2f}"}).map(get_eff_style, subset=['戰功效率'])
-    e2 = st.dataframe(s2, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t2")
-    if len(e2.selection['rows']): tm = d2.iloc[e2.selection['rows'][0]]['成員']
+    if not d2.empty:
+        s2 = d2.style.format({"戰功效率": "{:.2f}"}).map(get_eff_style, subset=['戰功效率'])
+        e2 = st.dataframe(s2, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t2")
+        if len(e2.selection['rows']): tm = d2.iloc[e2.selection['rows'][0]]['成員']
 with cl3:
     st.caption("🐢 遲緩名單")
     avg = latest_df['勢力值'].mean()
     d3 = filt_df[filt_df['勢力值']>avg].nsmallest(nr, '戰功效率')[['成員','勢力值','戰功效率']]
-    s3 = style_df(d3)
-    e3 = st.dataframe(s3, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t3")
-    if len(e3.selection['rows']): tm = d3.iloc[e3.selection['rows'][0]]['成員']
+    if not d3.empty:
+        s3 = d3.style.format({"勢力值": "{:,}", "戰功效率": "{:.2f}"}).map(get_power_style, subset=['勢力值']).map(get_eff_style, subset=['戰功效率'])
+        e3 = st.dataframe(s3, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t3")
+        if len(e3.selection['rows']): tm = d3.iloc[e3.selection['rows'][0]]['成員']
 st.markdown("</div>", unsafe_allow_html=True)
 
 # 3. 雷達
@@ -438,10 +432,7 @@ for k, v in RADAR_CONFIG.items():
 cq1, cq2, cq3, cq4 = st.columns([1.2, 1.2, 0.8, 0.8])
 with cq1: st.caption("戰功"); st.selectbox("", ["大於 >=", "小於 <="], key="q_merit_op", label_visibility="collapsed"); st.number_input("", step=10000, key="q_merit_val", label_visibility="collapsed")
 with cq2: st.caption("勢力"); st.selectbox("", ["大於 >=", "小於 <="], key="q_power_op", label_visibility="collapsed"); st.number_input("", step=5000, key="q_power_val", label_visibility="collapsed")
-with cq3: 
-    st.caption("效率篩選")
-    st.selectbox("", ["大於 >=", "小於 <="], key="q_eff_op", label_visibility="collapsed")
-    st.number_input("", step=1.0, key="q_eff_val", label_visibility="collapsed")
+with cq3: st.caption("效率篩選"); st.selectbox("", ["大於 >=", "小於 <="], key="q_eff_op", label_visibility="collapsed"); st.number_input("", step=1.0, key="q_eff_val", label_visibility="collapsed")
 with cq4: st.caption("Top N"); st.number_input("", step=10, key="q_rank", label_visibility="collapsed")
 
 qdf = filt_df.copy()
@@ -453,10 +444,12 @@ if "大於" in st.session_state.q_eff_op: qdf = qdf[qdf['戰功效率'] >= st.se
 else: qdf = qdf[qdf['戰功效率'] <= st.session_state.q_eff_val]
 qdf = qdf[qdf['貢獻排行'] <= st.session_state.q_rank].sort_values('貢獻排行')
 st.markdown(f"<div style='margin-top:10px;color:#AAA'>🎯 鎖定 {len(qdf)} 目標</div>", unsafe_allow_html=True)
-qdd = qdf[['成員', '分組', '貢獻排行', '戰功總量', '勢力值', '戰功效率']].copy()
-sq = style_df(qdd)
-eq = st.dataframe(sq, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="t4")
-if len(eq.selection['rows']): tm = qdf.iloc[eq.selection['rows'][0]]['成員']
+
+if not qdf.empty:
+    qdd = qdf[['成員', '分組', '貢獻排行', '戰功總量', '勢力值', '戰功效率']].copy()
+    sq = qdd.style.format({"戰功總量": "{:,}", "勢力值": "{:,}", "戰功效率": "{:.2f}"}).map(lambda v: get_merit_style(v, MERIT_THRESHOLD_95), subset=['戰功總量']).map(get_power_style, subset=['勢力值']).map(get_eff_style, subset=['戰功效率'])
+    eq = st.dataframe(sq, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="t4")
+    if len(eq.selection['rows']): tm = qdf.iloc[eq.selection['rows'][0]]['成員']
 st.markdown("</div>", unsafe_allow_html=True)
 
 # 4. 戰區
@@ -473,7 +466,13 @@ with cr2:
 if fl:
     infl = filt_df[filt_df['所屬勢力'].isin(fl)]; nofl = filt_df[~filt_df['所屬勢力'].isin(fl)]; r = len(infl)/len(filt_df)*100
     cz1, cz2 = st.columns(2); cz1.metric("前線", f"{len(infl)}", delta=f"{r:.1f}%"); cz2.metric("滯留", f"{len(nofl)}", delta="-未到", delta_color="inverse")
-    with st.expander(f"📋 滯留名單 ({len(nofl)}人)"): nd = nofl[['成員', '分組', '所屬勢力', '勢力值']].copy(); s_nd = nd.style.format({"勢力值": "{:,}"}).map(get_power_style, subset=['勢力值']); st.dataframe(s_nd, use_container_width=True, hide_index=True)
+    with st.expander(f"📋 滯留名單 ({len(nofl)}人)"): 
+        nd = nofl[['成員', '分組', '所屬勢力', '勢力值']].copy()
+        if not nd.empty:
+            s_nd = nd.style.format({"勢力值": "{:,}"}).map(get_power_style, subset=['勢力值'])
+            st.dataframe(s_nd, use_container_width=True, hide_index=True)
+        else:
+            st.info("無滯留人員")
 else: st.info("請勾選前線")
 st.markdown("</div>", unsafe_allow_html=True)
 

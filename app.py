@@ -5,7 +5,7 @@ import re
 import os
 import extra_streamlit_components as stx
 import datetime
-import time # [NEW] 引入 time 模組解決 Cookie 延遲
+import time
 
 # --- 1. 頁面配置與 CSS ---
 st.set_page_config(page_title="戰略指揮中心", layout="wide", page_icon="🏯")
@@ -94,7 +94,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 2. Cookie 管理器與資料庫核心 ---
-cookie_manager = stx.CookieManager() # 必須在最上層初始化
+cookie_manager = stx.CookieManager()
 
 DATA_FOLDER = "盟戰資料庫"
 if not os.path.exists(DATA_FOLDER): os.makedirs(DATA_FOLDER)
@@ -124,21 +124,15 @@ def load_data_from_folder():
     full_df['戰功效率'] = (full_df['戰功總量'] / full_df['勢力值']).round(2)
     return full_df
 
-# --- 3. 智慧門禁 (修復版) ---
+# --- 3. 智慧門禁 ---
 def check_password():
-    # 1. 檢查 Session
     if st.session_state.get("password_correct", False): return True
-    
-    # 2. 檢查 Cookie
     auth_token = cookie_manager.get("auth_token")
     if auth_token == "valid":
         st.session_state["password_correct"] = True
         return True
-    
-    # 3. 本地測試放行
     if "password" not in st.secrets: return True
 
-    # 4. 顯示輸入框
     placeholder = st.empty()
     with placeholder.container():
         st.markdown("### 🔒 指揮官權限驗證")
@@ -146,11 +140,9 @@ def check_password():
         if pwd:
             if pwd == st.secrets["password"]:
                 st.session_state["password_correct"] = True
-                # 設定 Cookie 1小時有效
                 expires = datetime.datetime.now() + datetime.timedelta(hours=1)
                 cookie_manager.set("auth_token", "valid", expires_at=expires)
-                # [重要] 等待 Cookie 寫入瀏覽器
-                time.sleep(1) 
+                time.sleep(1)
                 placeholder.empty()
                 st.rerun()
             else:
@@ -161,7 +153,7 @@ def check_password():
 
 check_password()
 
-# --- 4. 數據運算 ---
+# --- 4. 數據運算 (核心修復：動態欄位排序) ---
 def calculate_daily_velocity(df, group_col=None):
     df['date_only'] = df['紀錄時間'].dt.date
     daily_snapshots = df.groupby('date_only')['紀錄時間'].max().reset_index()
@@ -169,7 +161,8 @@ def calculate_daily_velocity(df, group_col=None):
     
     if group_col:
         agged = df_daily.groupby(['紀錄時間', group_col])[['戰功總量', '勢力值']].sum().reset_index()
-        agged = agged.sort_values(['分組', '紀錄時間'])
+        # [FIX] 這裡不能寫死 '分組'，要用變數 group_col
+        agged = agged.sort_values([group_col, '紀錄時間'])
         agged['time_diff'] = agged.groupby(group_col)['紀錄時間'].diff().dt.total_seconds() / 86400
         agged['merit_diff'] = agged.groupby(group_col)['戰功總量'].diff()
         agged['power_diff'] = agged.groupby(group_col)['勢力值'].diff()
@@ -184,11 +177,18 @@ def calculate_daily_velocity(df, group_col=None):
     agged['daily_power_growth'] = (agged['power_diff'] / agged['time_diff']).fillna(0)
     return agged
 
-# [NEW] 計算全域分組極值 (用於鎖定圖表)
+# 計算全域分組極值
 def get_group_global_max(raw_df):
-    # 這裡快速算一次分組的最大值
     gv_all = calculate_daily_velocity(raw_df, group_col='分組')
     return gv_all['daily_merit_growth'].max(), gv_all['daily_power_growth'].max(), gv_all['daily_power_growth'].min()
+
+# 計算全域個人極值 (修正版：調用修復後的 calculate_daily_velocity)
+def get_individual_global_max(raw_df):
+    temp_df = calculate_daily_velocity(raw_df, group_col='成員')
+    g_max_m = temp_df['daily_merit_growth'].max()
+    g_max_p = temp_df['daily_power_growth'].max()
+    g_min_p = temp_df['daily_power_growth'].min()
+    return g_max_m, g_max_p, g_min_p
 
 # --- 5. 狀態與 Cookie ---
 if 'last_selected_member' not in st.session_state: st.session_state.last_selected_member = None
@@ -220,23 +220,6 @@ def get_eff_class(val):
     if val > 10: return "tier-s"
     if val >= 5: return "tier-a"
     return "tier-b"
-
-# 為了避免 show_member_popup 參數過多，這裡直接計算個人全域極值
-def get_individual_global_max(raw_df):
-    # 簡化邏輯：抓出所有人的日均成長，取最大
-    # 效能考量：如果資料量巨大，這一步可能會慢。
-    # 這裡使用近似解：直接計算全體資料的 max diff
-    # 略過複雜計算，直接在 show_member_popup 內部處理單人鎖定，
-    # 或者如果需要全體鎖定（所有人的圖表 Y 軸都一樣高），則需要在此計算。
-    # 假設您的需求是「單人的圖表鎖定在單人的歷史最高點」 -> 這是預設行為
-    # 假設您的需求是「所有人的圖表鎖定在全盟最強者的最高點」 -> 這才能比較強弱
-    
-    # 計算全盟最強者的最高日增長 (用於鎖定所有人的 Y 軸)
-    temp_df = calculate_daily_velocity(raw_df, group_col='成員')
-    g_max_m = temp_df['daily_merit_growth'].max()
-    g_max_p = temp_df['daily_power_growth'].max()
-    g_min_p = temp_df['daily_power_growth'].min()
-    return g_max_m, g_max_p, g_min_p
 
 @st.dialog("王牌戰略檔案", width="large")
 def show_member_popup(member_name, raw_df, g_max_m, g_max_p, g_min_p):
@@ -276,26 +259,15 @@ def show_member_popup(member_name, raw_df, g_max_m, g_max_p, g_min_p):
         st.markdown("##### 🚀 戰力加速度 (日均成長速率)")
         base = alt.Chart(history).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
         
-        # [核心修正] 
-        # 1. 戰功 (黃色 Area) 放右軸
-        # 2. 勢力 (綠色 Line) 放左軸
-        # 3. 鎖定全域最高值
-        
         # 勢力 (左軸, 綠色線條)
         line = base.mark_line(interpolate='basis', color='#00FF55', strokeWidth=3).encode(
-            y=alt.Y('daily_power_growth', 
-                    title='日增勢力 (綠)', 
-                    axis=alt.Axis(titleColor='#00FF55'),
-                    scale=alt.Scale(domain=[g_min_p, g_max_p])), # 鎖定
+            y=alt.Y('daily_power_growth', title='日增勢力 (綠)', axis=alt.Axis(titleColor='#00FF55'), scale=alt.Scale(domain=[g_min_p, g_max_p])), 
             tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f', title='日增勢力')]
         )
         
         # 戰功 (右軸, 黃色區域)
         area = base.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
-            y=alt.Y('daily_merit_growth', 
-                    title='日增戰功 (黃)', 
-                    axis=alt.Axis(titleColor='#FFE100', orient='right'),
-                    scale=alt.Scale(domain=[0, g_max_m])), # 鎖定
+            y=alt.Y('daily_merit_growth', title='日增戰功 (黃)', axis=alt.Axis(titleColor='#FFE100', orient='right'), scale=alt.Scale(domain=[0, g_max_m])), 
             tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f', title='日增戰功')]
         )
         
@@ -315,7 +287,7 @@ latest_time_str = latest_df['紀錄時間'].iloc[0].strftime('%Y/%m/%d %H:%M')
 st.sidebar.caption(f"📅 {latest_time_str}")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8rem;'>戰略指揮中心 v47.0<br>Updated: {latest_time_str}</div>", unsafe_allow_html=True)
+st.sidebar.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8rem;'>戰略指揮中心 v48.0<br>Updated: {latest_time_str}</div>", unsafe_allow_html=True)
 
 grps = list(latest_df['分組'].unique())
 sel_grps = st.sidebar.multiselect("分組", grps, default=grps)
@@ -345,12 +317,10 @@ with k2: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>總勢力</d
 with k3: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>活躍人數</div><div class='kpi-value'>{len(filt_df):,}</div></div>", unsafe_allow_html=True)
 with k4: st.markdown(f"<div class='kpi-card'><div class='kpi-label'>平均效率</div><div class='kpi-value {eff_class}'>{avg_eff:.2f}</div></div>", unsafe_allow_html=True)
 
-st.markdown(f"""<div class="version-tag">v47.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
+st.markdown(f"""<div class="version-tag">v48.0 | {latest_time_str}</div>""", unsafe_allow_html=True)
 
-# --- [核心修正] 全盟/分組圖表也要採用 黃(Merit) 綠(Power) 配色 ---
-# 並且套用全域鎖定 (注意：全盟/分組的數值量級不同，這裡鎖定的是分組間的比較)
-
-# 預先計算所有分組的極值 (用於鎖定分組圖表)
+# --- 戰略動能分析 ---
+# 預先計算所有分組的極值
 gv_all_data = calculate_daily_velocity(raw_df, group_col='分組')
 grp_max_m = gv_all_data['daily_merit_growth'].max()
 grp_max_p = gv_all_data['daily_power_growth'].max()
@@ -367,14 +337,13 @@ st.markdown("### 📈 戰略動能分析")
 ct1, ct2 = st.columns(2)
 with ct1:
     st.caption("🌍 全盟 (黃:戰功 / 綠:勢力)")
-    # 全盟圖表
     ba = alt.Chart(av_data).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
-    # 勢力 (綠, Line, 左軸)
+    # 左軸綠線 (勢力)
     la = ba.mark_line(interpolate='basis', color='#00FF55', strokeWidth=2).encode(
         y=alt.Y('daily_power_growth', title='日增勢力', axis=alt.Axis(titleColor='#00FF55'), scale=alt.Scale(domain=[av_min_p, av_max_p])), 
         tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f', title='勢力增量')]
     )
-    # 戰功 (黃, Area, 右軸)
+    # 右軸黃面 (戰功)
     aa = ba.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
         y=alt.Y('daily_merit_growth', title='日增戰功', axis=alt.Axis(titleColor='#FFE100', orient='right'), scale=alt.Scale(domain=[0, av_max_m])), 
         tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f', title='戰功增量')]
@@ -387,12 +356,12 @@ with ct2:
     gv = gv_all_data[gv_all_data['分組'] == tg]
     
     bg = alt.Chart(gv).encode(x=alt.X('紀錄時間', axis=alt.Axis(format='%m/%d', title=None)))
-    # 勢力 (綠, Line, 左軸)
+    # 左軸綠線 (勢力)
     lg = bg.mark_line(interpolate='basis', color='#00FF55', strokeWidth=2).encode(
         y=alt.Y('daily_power_growth', title='日增勢力', axis=alt.Axis(titleColor='#00FF55'), scale=alt.Scale(domain=[grp_min_p, grp_max_p])), 
         tooltip=['紀錄時間', alt.Tooltip('daily_power_growth', format=',.0f', title='勢力增量')]
     )
-    # 戰功 (黃, Area, 右軸)
+    # 右軸黃面 (戰功)
     ag = bg.mark_area(interpolate='basis', line={'color':'#FFE100'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='rgba(255, 225, 0, 0.5)', offset=0), alt.GradientStop(color='rgba(255, 225, 0, 0.1)', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
         y=alt.Y('daily_merit_growth', title='日增戰功', axis=alt.Axis(titleColor='#FFE100', orient='right'), scale=alt.Scale(domain=[0, grp_max_m])), 
         tooltip=['紀錄時間', alt.Tooltip('daily_merit_growth', format=',.0f', title='戰功增量')]
@@ -407,8 +376,7 @@ with c1: st.markdown("### 🏳️ 集團軍情報")
 with c2: fs = st.slider("字體", 14, 30, value=st.session_state.font_size, key="font_size_slider", on_change=update_font_cookie, label_visibility="collapsed")
 gs = filt_df.groupby('分組').agg(n=('成員','count'), wm=('戰功總量','sum'), awm=('戰功總量','mean'), p=('勢力值','sum'), ap=('勢力值','mean')).reset_index().sort_values('wm', ascending=False)
 html_content = f"<style>.clean-table td, .clean-table th {{ font-size: {fs}px; }}</style><table class='clean-table'><thead><tr><th>分組</th><th>人數</th><th>總戰功</th><th>平均戰功</th><th>總勢力</th><th>平均勢力</th></tr></thead><tbody>"
-for _, r in gs.iterrows():
-    html_content += f"<tr><td>{r['分組']}</td><td>{r['n']}</td><td>{int(r['wm']):,}</td><td>{int(r['awm']):,}</td><td>{int(r['p']):,}</td><td>{int(r['ap']):,}</td></tr>"
+for _, r in gs.iterrows(): html_content += f"<tr><td>{r['分組']}</td><td>{r['n']}</td><td>{int(r['wm']):,}</td><td>{int(r['awm']):,}</td><td>{int(r['p']):,}</td><td>{int(r['ap']):,}</td></tr>"
 html_content += "</tbody></table>"
 st.markdown(html_content, unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)

@@ -1,6 +1,6 @@
 import pandas as pd
 import streamlit as st
-from typing import Optional, Any
+from typing import Any
 
 # --- Constants & Configuration ---
 COLORS = {
@@ -48,7 +48,7 @@ MAIN_CSS = f"""
     .card-red {{ border-top: 3px solid {COLORS['danger']}; }}
     .card-blue {{ border-top: 3px solid {COLORS['primary']}; }}
     .card-purple {{ border-top: 3px solid {COLORS['secondary']}; }}
-    .card-gold {{ border-top: 33px solid {COLORS['warning']}; }}
+    .card-gold {{ border-top: 3px solid {COLORS['warning']}; }}
 
     /* Tables */
     .clean-table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
@@ -94,34 +94,29 @@ def format_k(num: Any) -> str:
     return f"{int(num)}"
 
 def get_eff_style(val: float) -> str:
-    """Returns CSS style string for efficiency values."""
     if pd.isna(val): return f"color: {COLORS['text']}"
     if val >= 10: return f"color: {COLORS['success']}"
     if val >= 5: return f"color: {COLORS['info']}"
     return f"color: {COLORS['text']}"
 
 def get_eff_class(val: float) -> str:
-    """Returns CSS class name for efficiency values."""
     if pd.isna(val): return "tier-b"
     if val >= 10: return "tier-s"
     if val >= 5: return "tier-a"
     return "tier-b"
 
 def get_merit_style(val: float, threshold: float) -> str:
-    """Returns CSS style string for merit values."""
     if pd.isna(val): return f"color: {COLORS['text']}"
     if val >= threshold: return f"color: {COLORS['success']}"
     return f"color: {COLORS['text']}"
 
 def get_power_style(val: float) -> str:
-    """Returns CSS style string for power values."""
     if pd.isna(val): return f"color: {COLORS['text']}"
     if val >= 30000: return f"color: {COLORS['success']}"
     if val >= 15000: return f"color: {COLORS['info']}"
     return f"color: {COLORS['text']}"
 
 def style_df_full(df: pd.DataFrame, merit_threshold: float) -> Any:
-    """Applies standard styling to a dataframe."""
     fmt = {}
     if '戰功總量' in df.columns: fmt['戰功總量'] = format_k
     if '勢力值' in df.columns: fmt['勢力值'] = format_k
@@ -138,7 +133,6 @@ def style_df_full(df: pd.DataFrame, merit_threshold: float) -> Any:
     return s
 
 def generate_ace_table_html(curr: pd.Series, s_merit: str, s_power: str, s_eff: str) -> str:
-    """Generates HTML for the Ace Member popup table."""
     return f"""<table class="ace-table">
             <tr><td class="ace-label-col">⚔️ 戰功</td><td class="ace-value-col" style="{s_merit}">{format_k(curr['戰功總量'])}</td></tr>
             <tr><td class="ace-label-col">🏰 勢力</td><td class="ace-value-col" style="{s_power}">{format_k(curr['勢力值'])}</td></tr>

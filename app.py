@@ -59,7 +59,8 @@ def check_password():
         return True
     
     if "password" not in st.secrets:
-        st.warning("⚠️ 未設定密碼 (st.secrets)，已繞過驗證。")
+        # Development mode bypass or warning
+        # st.warning("⚠️ 未設定密碼 (st.secrets)，已繞過驗證。")
         return True
 
     placeholder = st.empty()
@@ -239,7 +240,7 @@ header_col1, header_col2 = st.columns([4, 1])
 with header_col1: st.markdown("### 🏆 重點人員")
 with header_col2: num_rows = st.number_input("行數", 5, 50, 10, step=5, label_visibility="collapsed")
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2 = st.columns(2)
 
 with col1:
     st.caption("🔥 十大戰功")
@@ -257,17 +258,24 @@ with col2:
         event_eff = st.dataframe(styled_eff, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="table_eff")
         if len(event_eff.selection['rows']): target_member = top_efficiency.iloc[event_eff.selection['rows'][0]]['成員']
 
-with col3:
-    st.caption("🐢 預設篩選")
-    btn_col1, btn_col2 = st.columns(2)
-    if btn_col1.button(ud.RADAR_CONFIG['slave']['desc']): set_preset('slave')
-    if btn_col2.button(ud.RADAR_CONFIG['newbie']['desc']): set_preset('newbie')
+st.markdown("</div>", unsafe_allow_html=True)
 
-with col4:
-    st.caption("⚙️ 進階篩選")
-    btn_col3, btn_col4 = st.columns(2)
-    if btn_col3.button(ud.RADAR_CONFIG['elite']['desc']): set_preset('elite')
-    if btn_col4.button(ud.RADAR_CONFIG['reset']['desc']): set_preset('reset')
+# --- Tactical Radar Section ---
+st.markdown("<div class='dashboard-card card-purple'>", unsafe_allow_html=True)
+st.markdown("### 🛰️ 戰術雷達")
+
+# Preset Buttons
+preset_col1, preset_col2, preset_col3, preset_col4 = st.columns(4)
+with preset_col1:
+    if st.button(ud.RADAR_CONFIG['slave']['desc'], use_container_width=True): set_preset('slave')
+with preset_col2:
+    if st.button(ud.RADAR_CONFIG['newbie']['desc'], use_container_width=True): set_preset('newbie')
+with preset_col3:
+    if st.button(ud.RADAR_CONFIG['elite']['desc'], use_container_width=True): set_preset('elite')
+with preset_col4:
+    if st.button(ud.RADAR_CONFIG['reset']['desc'], use_container_width=True): set_preset('reset')
+
+st.markdown("---")
 
 # Filter Controls
 filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([1.2, 1.2, 0.8, 0.8])

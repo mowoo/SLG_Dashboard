@@ -3,7 +3,7 @@ import os
 import re
 import datetime
 import streamlit as st
-from typing import List, Dict, Tuple, Optional
+from typing import Optional, Tuple
 
 # --- Configuration ---
 DATA_FOLDER = "盟戰資料庫"
@@ -17,7 +17,6 @@ RADAR_CONFIG = {
 
 # --- IO Functions ---
 def save_uploaded_file(uploaded_file) -> bool:
-    """Saves an uploaded file to the data folder."""
     if not os.path.exists(DATA_FOLDER):
         os.makedirs(DATA_FOLDER)
     try:
@@ -31,7 +30,6 @@ def save_uploaded_file(uploaded_file) -> bool:
 
 @st.cache_data(ttl=300)
 def load_data_from_folder() -> pd.DataFrame:
-    """Loads and consolidates all CSV files from the data folder."""
     if not os.path.exists(DATA_FOLDER):
         return pd.DataFrame()
     
@@ -44,15 +42,15 @@ def load_data_from_folder() -> pd.DataFrame:
             df = pd.read_csv(file_path)
             
             # Extract timestamp from filename
-            # Format: 同盟統計YYYY年MM月DD日HH时mm分SS秒.csv
-            match = re.search(r'(\d{4})年(\d{2})月(\d{2})日(\d{2})时(\d{2})分(\d{2})秒', filename)
+            # Format: 同盟統計YYYY年MM月DD日HH[时|時]mm分SS秒.csv
+            match = re.search(r'(\d{4})年(\d{2})月(\d{2})日(\d{2})[时|時](\d{2})分(\d{2})秒', filename)
             if match:
                 dt_str = f"{match.group(1)}-{match.group(2)}-{match.group(3)} {match.group(4)}:{match.group(5)}:{match.group(6)}"
                 df['紀錄時間'] = pd.to_datetime(dt_str)
             else:
-                if '紀錄時間' not in df.columns:
-                     print(f"Warning: Could not extract timestamp from {filename} and column missing.")
-                     continue
+                # Fallback or skip if date not found
+                # print(f"Warning: Could not extract timestamp from {filename}")
+                continue
 
             all_data_frames.append(df)
         except Exception as e:
@@ -72,7 +70,7 @@ def load_data_from_folder() -> pd.DataFrame:
         st.error(f"資料缺少必要欄位: {missing_cols}，請檢查上傳的 CSV 檔案格式。")
         return pd.DataFrame()
         
-    # Data Cleaning and Feature Engineering
+    # Data Cleaning
     full_df['勢力值'] = full_df['勢力值'].replace(0, 1) # Avoid division by zero
     full_df['戰功效率'] = (full_df['戰功總量'] / full_df['勢力值']).round(2)
     full_df = full_df[~full_df['分組'].isin(EXCLUDE_GROUPS)]
@@ -82,11 +80,10 @@ def load_data_from_folder() -> pd.DataFrame:
 # --- Calculation Functions ---
 @st.cache_data(ttl=300)
 def calculate_daily_velocity(df: pd.DataFrame, group_col: Optional[str] = None) -> pd.DataFrame:
-    """Calculates daily growth velocity for merit and power."""
     df = df.copy()
     df['date_only'] = df['紀錄時間'].dt.date
     
-    # Get the last record of each day to represent that day's state
+    # Get the last record of each day
     daily_snapshots = df.groupby('date_only')['紀錄時間'].max().reset_index()
     df_daily = pd.merge(df, daily_snapshots, on=['date_only', '紀錄時間'], how='inner')
     
@@ -109,7 +106,6 @@ def calculate_daily_velocity(df: pd.DataFrame, group_col: Optional[str] = None) 
     return agged
 
 def get_individual_global_max(raw_df: pd.DataFrame) -> Tuple[float, float, float]:
-    """Calculates global max/min growth rates for individual members."""
     temp_df = calculate_daily_velocity(raw_df, group_col='成員')
     g_max_m = temp_df['daily_merit_growth'].max()
     g_max_p = temp_df['daily_power_growth'].max()

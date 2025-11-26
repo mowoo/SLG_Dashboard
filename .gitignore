@@ -1,10 +1,14 @@
-# Python 快取 (新模組會產生這個，必須忽略)
+# 忽略 Python 編譯檔
 __pycache__/
 *.py[cod]
 
-# Streamlit 設定與密碼
+# 忽略 Streamlit 密碼設定
 .streamlit/secrets.toml
 
-# 資料庫 (太大的 CSV 不要上傳)
+# 忽略數據資料夾 (不要上傳 CSV！)
 盟戰資料庫/
 *.csv
+
+# 忽略虛擬環境
+venv/
+.env

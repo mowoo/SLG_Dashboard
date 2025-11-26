@@ -38,40 +38,69 @@ def load_data_from_folder() -> pd.DataFrame:
     
     for filename in files:
         file_path = os.path.join(DATA_FOLDER, filename)
-        try:
-            df = pd.read_csv(file_path)
-            
-            # Extract timestamp from filename
-            # Format: 同盟統計YYYY年MM月DD日HH[时|時]mm分SS秒.csv
-            match = re.search(r'(\d{4})年(\d{2})月(\d{2})日(\d{2})[时|時](\d{2})分(\d{2})秒', filename)
-            if match:
-                dt_str = f"{match.group(1)}-{match.group(2)}-{match.group(3)} {match.group(4)}:{match.group(5)}:{match.group(6)}"
-                df['紀錄時間'] = pd.to_datetime(dt_str)
-            else:
-                # Fallback or skip if date not found
-                # print(f"Warning: Could not extract timestamp from {filename}")
+        df = pd.DataFrame()
+        
+        # 1. 嘗試多種編碼讀取
+        encodings_to_try = ['utf-8-sig', 'utf-8', 'big5', 'gbk']
+        for enc in encodings_to_try:
+            try:
+                df = pd.read_csv(file_path, encoding=enc)
+                break
+            except:
                 continue
+        
+        if df.empty:
+            st.warning(f"⚠️ 無法讀取檔案 {filename} (編碼失敗)")
+            continue
 
-            all_data_frames.append(df)
-        except Exception as e:
-            print(f"Error loading {filename}: {e}")
+        # 2. 清洗欄位名稱 (去除空白)
+        df.columns = df.columns.str.strip()
+
+        # 3. 欄位別名自動對應 (Mapping)
+        # 如果 CSV 是簡體或別名，自動轉回標準名稱
+        column_mapping = {
+            '势力值': '勢力值', '势力': '勢力值', 'Power': '勢力值',
+            '战功总量': '戰功總量', '战功': '戰功總量', 'Merit': '戰功總量',
+            '分组': '分組', 'Group': '分組',
+            '成员': '成員', 'Member': '成員',
+            '所属势力': '所屬勢力', 'Region': '所屬勢力'
+        }
+        df.rename(columns=column_mapping, inplace=True)
+
+        # 4. 讀取時間戳
+        match = re.search(r'(\d{4})年(\d{2})月(\d{2})日(\d{2})[时|時](\d{2})分(\d{2})秒', filename)
+        if match:
+            dt_str = f"{match.group(1)}-{match.group(2)}-{match.group(3)} {match.group(4)}:{match.group(5)}:{match.group(6)}"
+            df['紀錄時間'] = pd.to_datetime(dt_str)
+        else:
+            # 檔名沒時間，跳過
+            continue
+
+        all_data_frames.append(df)
         
     if not all_data_frames:
         return pd.DataFrame()
     
     full_df = pd.concat(all_data_frames, ignore_index=True)
-    
     if '紀錄時間' in full_df.columns:
         full_df = full_df.sort_values('紀錄時間')
         
+    # 5. 最終檢查與除錯輸出
     required_cols = ['勢力值', '戰功總量', '分組']
     missing_cols = [col for col in required_cols if col not in full_df.columns]
+    
     if missing_cols:
-        st.error(f"資料缺少必要欄位: {missing_cols}，請檢查上傳的 CSV 檔案格式。")
+        st.error("❌ CSV 欄位讀取失敗")
+        st.markdown(f"**缺少的欄位:** `{missing_cols}`")
+        st.markdown(f"**實際讀到的欄位 (前5個):** `{list(full_df.columns)[:5]} ...`")
+        st.warning("請截圖此畫面，或檢查 CSV 標題是否為亂碼 (Big5/GBK)。")
         return pd.DataFrame()
         
     # Data Cleaning
-    full_df['勢力值'] = full_df['勢力值'].replace(0, 1) # Avoid division by zero
+    for col in ['勢力值', '戰功總量']:
+        full_df[col] = pd.to_numeric(full_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+
+    full_df['勢力值'] = full_df['勢力值'].replace(0, 1)
     full_df['戰功效率'] = (full_df['戰功總量'] / full_df['勢力值']).round(2)
     full_df = full_df[~full_df['分組'].isin(EXCLUDE_GROUPS)]
     
@@ -83,7 +112,6 @@ def calculate_daily_velocity(df: pd.DataFrame, group_col: Optional[str] = None) 
     df = df.copy()
     df['date_only'] = df['紀錄時間'].dt.date
     
-    # Get the last record of each day
     daily_snapshots = df.groupby('date_only')['紀錄時間'].max().reset_index()
     df_daily = pd.merge(df, daily_snapshots, on=['date_only', '紀錄時間'], how='inner')
     

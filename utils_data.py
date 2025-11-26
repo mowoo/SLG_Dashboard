@@ -54,6 +54,12 @@ def load_data_from_folder():
     if '紀錄時間' in full_df.columns:
         full_df = full_df.sort_values('紀錄時間')
         
+    required_cols = ['勢力值', '戰功總量', '分組']
+    missing_cols = [col for col in required_cols if col not in full_df.columns]
+    if missing_cols:
+        st.error(f"資料缺少必要欄位: {missing_cols}，請檢查上傳的 CSV 檔案格式。")
+        return pd.DataFrame()
+        
     full_df['勢力值'] = full_df['勢力值'].replace(0, 1)
     full_df['戰功效率'] = (full_df['戰功總量'] / full_df['勢力值']).round(2)
     full_df = full_df[~full_df['分組'].isin(EXCLUDE_GROUPS)]

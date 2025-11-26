@@ -38,7 +38,9 @@ def check_password():
     if auth_token == "valid":
         st.session_state["password_correct"] = True
         return True
-    if "password" not in st.secrets: return True
+    if "password" not in st.secrets:
+        st.warning("⚠️ 未設定密碼 (st.secrets)，已繞過驗證。")
+        return True
 
     placeholder = st.empty()
     with placeholder.container():
@@ -190,7 +192,7 @@ st.markdown("<div class='dashboard-card card-blue'>", unsafe_allow_html=True)
 c1, c2 = st.columns([4, 1])
 with c1: st.markdown("### 🏆 重點人員")
 with c2: nr = st.number_input("行數", 5, 50, 10, step=5, label_visibility="collapsed")
-cl1, cl2, cl3 = st.columns(3)
+cl1, cl2, cl3, cl4 = st.columns(4)
 
 with cl1:
     st.caption("🔥 十大戰功")
@@ -206,28 +208,18 @@ with cl2:
         s2 = d2.style.format({"戰功效率": "{:.2f}"}).map(us.get_eff_style, subset=['戰功效率'])
         e2 = st.dataframe(s2, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t2")
         if len(e2.selection['rows']): tm = d2.iloc[e2.selection['rows'][0]]['成員']
-with cl3:
-    st.caption("🐢 遲緩名單")
-    avg = latest_df['勢力值'].mean()
-    d3 = filt_df[filt_df['勢力值']>avg].nsmallest(nr, '戰功效率')[['成員','勢力值','戰功效率']]
-    if not d3.empty:
-        e3 = st.dataframe(us.style_df_slow(d3), hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t3")
-        if len(e3.selection['rows']): tm = d3.iloc[e3.selection['rows'][0]]['成員']
-st.markdown("</div>", unsafe_allow_html=True)
 
-# 戰術雷達
-st.markdown("<div class='dashboard-card card-purple'>", unsafe_allow_html=True)
-st.markdown("### 🛰️ 戰術雷達")
-cb1, cb2, cb3, cb4 = st.columns(4)
-for k, v in ud.RADAR_CONFIG.items():
-    if k == 'reset':
-        if cb4.button(v['desc']): set_preset(k)
-    elif k == 'slave':
-        if cb1.button(v['desc']): set_preset(k)
-    elif k == 'elite':
-        if cb2.button(v['desc']): set_preset(k)
-    elif k == 'newbie':
-        if cb3.button(v['desc']): set_preset(k)
+with cl3:
+    st.caption("🐢 預設篩選")
+    c1, c2 = st.columns(2)
+    if c1.button(ud.RADAR_CONFIG['slave']['desc']): set_preset('slave')
+    if c2.button(ud.RADAR_CONFIG['newbie']['desc']): set_preset('newbie')
+
+with cl4:
+    st.caption("⚙️ 進階篩選")
+    c3, c4 = st.columns(2)
+    if c3.button(ud.RADAR_CONFIG['elite']['desc']): set_preset('elite')
+    if c4.button(ud.RADAR_CONFIG['reset']['desc']): set_preset('reset')
 
 cq1, cq2, cq3, cq4 = st.columns([1.2, 1.2, 0.8, 0.8])
 with cq1: st.caption("戰功"); st.selectbox("", ["大於 >=", "小於 <="], key="q_merit_op", label_visibility="collapsed"); st.number_input("", step=10000, key="q_merit_val", label_visibility="collapsed")
@@ -236,7 +228,7 @@ with cq3: st.caption("效率"); st.selectbox("", ["大於 >=", "小於 <="], key
 with cq4: st.caption("Top N"); st.number_input("", step=10, key="q_rank", label_visibility="collapsed")
 
 qdf = filt_df.copy()
-# 篩選邏輯 (保持簡單，不移至 utils 因為涉及大量 st.session_state)
+# 篩選邏輯
 if "大於" in st.session_state.q_merit_op: qdf = qdf[qdf['戰功總量'] >= st.session_state.q_merit_val]
 else: qdf = qdf[qdf['戰功總量'] <= st.session_state.q_merit_val]
 if "大於" in st.session_state.q_power_op: qdf = qdf[qdf['勢力值'] >= st.session_state.q_power_val]

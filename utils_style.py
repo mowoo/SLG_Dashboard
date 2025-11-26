@@ -92,21 +92,24 @@ def get_merit_style(val, threshold):
 
 def get_power_style(val):
     if pd.isna(val): return "color: #E0E0E0"
-    if val < 20000: return "color: #FF7F50"
-    if val > 30000: return "color: #2E8B57"
+    if val >= 30000: return "color: #00FF55"
+    if val >= 15000: return "color: #00E5FF"
     return "color: #E0E0E0"
 
-# --- DataFrame Style ---
 def style_df_full(df, merit_threshold):
-    return df.style.format({"戰功總量":format_k, "勢力值":format_k, "戰功效率":"{:.2f}"}) \
-             .map(lambda v: get_merit_style(v, merit_threshold), subset=['戰功總量']) \
-             .map(get_power_style, subset=['勢力值']) \
-             .map(get_eff_style, subset=['戰功效率'])
-
-def style_df_slow(df):
-    s = df.style.format({"勢力值": format_k, "戰功效率": "{:.2f}"})
-    if '勢力值' in df.columns: s = s.map(get_power_style, subset=['勢力值'])
-    if '戰功效率' in df.columns: s = s.map(get_eff_style, subset=['戰功效率'])
+    fmt = {}
+    if '戰功總量' in df.columns: fmt['戰功總量'] = format_k
+    if '勢力值' in df.columns: fmt['勢力值'] = format_k
+    if '戰功效率' in df.columns: fmt['戰功效率'] = "{:.2f}"
+    
+    s = df.style.format(fmt)
+    
+    if '戰功總量' in df.columns:
+        s = s.map(lambda x: get_merit_style(x, merit_threshold), subset=['戰功總量'])
+    if '勢力值' in df.columns:
+        s = s.map(get_power_style, subset=['勢力值'])
+    if '戰功效率' in df.columns:
+        s = s.map(get_eff_style, subset=['戰功效率'])
     return s
 
 def generate_ace_table_html(curr, s_merit, s_power, s_eff):

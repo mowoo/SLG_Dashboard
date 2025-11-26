@@ -2,6 +2,7 @@ import pandas as pd
 import os
 import re
 import datetime
+import streamlit as st
 
 # --- 配置 ---
 DATA_FOLDER = "盟戰資料庫"
@@ -21,38 +22,45 @@ def save_uploaded_file(uploaded_file):
         return True
     except: return False
 
+@st.cache_data(ttl=300)
 def load_data_from_folder():
     if not os.path.exists(DATA_FOLDER): return pd.DataFrame()
     all_data = []
     files = [f for f in os.listdir(DATA_FOLDER) if f.endswith('.csv')]
-    if not files: return pd.DataFrame()
     
     for filename in files:
         try:
             df = pd.read_csv(os.path.join(DATA_FOLDER, filename))
-            df.columns = df.columns.str.strip()
             
-            # 清洗
-            for col in ['戰功總量', '勢力值']:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+            # Extract timestamp from filename
+            # Format: 同盟統計YYYY年MM月DD日HH时mm分SS秒.csv
+            match = re.search(r'(\d{4})年(\d{2})月(\d{2})日(\d{2})时(\d{2})分(\d{2})秒', filename)
+            if match:
+                dt_str = f"{match.group(1)}-{match.group(2)}-{match.group(3)} {match.group(4)}:{match.group(5)}:{match.group(6)}"
+                df['紀錄時間'] = pd.to_datetime(dt_str)
+            else:
+                if '紀錄時間' not in df.columns:
+                     print(f"Warning: Could not extract timestamp from {filename} and column missing.")
+                     continue
 
-            # 解析時間
-            match = re.search(r'(\d{4})年(\d{2})月(\d{2})日(\d{2})[时|時](\d{2})分(\d{2})秒', filename)
-            record_date = pd.to_datetime(f"{match.group(1)}-{match.group(2)}-{match.group(3)} {match.group(4)}:{match.group(5)}:{match.group(6)}") if match else pd.Timestamp.now()
-            df['紀錄時間'] = record_date
             all_data.append(df)
-        except: pass
+        except Exception as e:
+            print(f"Error loading {filename}: {e}")
         
     if not all_data: return pd.DataFrame()
     
-    full_df = pd.concat(all_data, ignore_index=True).sort_values('紀錄時間')
+    full_df = pd.concat(all_data, ignore_index=True)
+    
+    if '紀錄時間' in full_df.columns:
+        full_df = full_df.sort_values('紀錄時間')
+        
     full_df['勢力值'] = full_df['勢力值'].replace(0, 1)
     full_df['戰功效率'] = (full_df['戰功總量'] / full_df['勢力值']).round(2)
     full_df = full_df[~full_df['分組'].isin(EXCLUDE_GROUPS)]
     return full_df
 
 # --- 計算函數 ---
+@st.cache_data(ttl=300)
 def calculate_daily_velocity(df, group_col=None):
     df = df.copy()
     df['date_only'] = df['紀錄時間'].dt.date

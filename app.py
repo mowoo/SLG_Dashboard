@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import extra_streamlit_components as stx
@@ -353,4 +352,3 @@ st.markdown("</div>", unsafe_allow_html=True)
 if target_member and target_member != st.session_state.last_selected_member:
     st.session_state.last_selected_member = target_member
     show_member_popup(target_member, raw_df, G_MAX_M, G_MAX_P, G_MIN_P, MERIT_THRESHOLD_95)
-```

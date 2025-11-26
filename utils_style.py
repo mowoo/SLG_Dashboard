@@ -120,7 +120,7 @@ def get_power_style(val: float) -> str:
     if val >= 15000: return f"color: {COLORS['info']}"
     return f"color: {COLORS['text']}"
 
-def style_df_full(df: pd.DataFrame, merit_threshold: float) -> pd.io.formats.style.Styler:
+def style_df_full(df: pd.DataFrame, merit_threshold: float) -> Any:
     """Applies standard styling to a dataframe."""
     fmt = {}
     if '戰功總量' in df.columns: fmt['戰功總量'] = format_k

@@ -105,11 +105,11 @@ def style_df_full(df, merit_threshold):
     s = df.style.format(fmt)
     
     if '戰功總量' in df.columns:
-        s = s.map(lambda x: get_merit_style(x, merit_threshold), subset=['戰功總量'])
+        s = s.map(lambda x: get_merit_style(x, merit_threshold), subset=pd.IndexSlice[:, ['戰功總量']])
     if '勢力值' in df.columns:
-        s = s.map(get_power_style, subset=['勢力值'])
+        s = s.map(get_power_style, subset=pd.IndexSlice[:, ['勢力值']])
     if '戰功效率' in df.columns:
-        s = s.map(get_eff_style, subset=['戰功效率'])
+        s = s.map(get_eff_style, subset=pd.IndexSlice[:, ['戰功效率']])
     return s
 
 def generate_ace_table_html(curr, s_merit, s_power, s_eff):

@@ -205,7 +205,7 @@ with cl2:
     st.caption("⚡ 十大效率")
     d2 = filt_df[filt_df['勢力值']>10000].nlargest(nr, '戰功效率')[['成員','分組','戰功效率']]
     if not d2.empty:
-        s2 = d2.style.format({"戰功效率": "{:.2f}"}).map(us.get_eff_style, subset=['戰功效率'])
+        s2 = d2.style.format({"戰功效率": "{:.2f}"}).map(us.get_eff_style, subset=pd.IndexSlice[:, ['戰功效率']])
         e2 = st.dataframe(s2, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="t2")
         if len(e2.selection['rows']): tm = d2.iloc[e2.selection['rows'][0]]['成員']
 
@@ -260,7 +260,7 @@ if fl:
     cz1, cz2 = st.columns(2); cz1.metric("前線", f"{len(infl)}", delta=f"{r:.1f}%"); cz2.metric("滯留", f"{len(nofl)}", delta="-未到", delta_color="inverse")
     with st.expander(f"📋 滯留名單 ({len(nofl)}人)"): 
         nd = nofl[['成員', '分組', '所屬勢力', '勢力值']].copy()
-        if not nd.empty: st.dataframe(nd.style.format({"勢力值": us.format_k}).map(us.get_power_style, subset=['勢力值']), use_container_width=True, hide_index=True)
+        if not nd.empty: st.dataframe(nd.style.format({"勢力值": us.format_k}).map(us.get_power_style, subset=pd.IndexSlice[:, ['勢力值']]), use_container_width=True, hide_index=True)
 else: st.info("請勾選前線")
 st.markdown("</div>", unsafe_allow_html=True)
 
